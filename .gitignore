@@ -1,0 +1,61 @@
+# ALLOW-LIST. Everything is ignored unless it is listed here. Only our own source and docs may be public.
+# Never add the disc, anything the build makes (build/: extracted game files, generated C, Rugrats.exe),
+# save states, memory cards, screenshots, audio/video clips, backups or the dev notes. See PUBLISHING.md.
+/*
+!/.gitignore
+!/.gitattributes
+!/README.md
+!/PUBLISHING.md
+!/LICENSE
+!/Launcher.bat
+!/recomp/
+
+# Inside recomp/: block caches and every non-source file type, even if someone drops one in by mistake.
+__pycache__/
+*.pyc
+*.bin
+*.cue
+*.iso
+*.img
+*.chd
+*.pbp
+*.ecm
+*.exe
+*.dll
+*.pdb
+*.lib
+*.obj
+*.o
+*.state
+*.mcd
+*.mcr
+*.sav
+*.raw
+*.bmp
+*.png
+*.jpg
+*.gif
+*.wav
+*.mp3
+*.ogg
+*.mp4
+*.str
+*.xa
+*.tim
+*.vab
+*.vh
+*.vb
+*.zip
+*.bps
+*.ips
+*.xdelta
+*.tex
+*.fnt
+*.7z
+*.rar
+*.json
+*.csv
+*.log
+*.ini
+# Example mods are plain text we wrote (no game data): only their mod.ini.
+!/recomp/mods/*/mod.ini

@@ -1,0 +1,6 @@
+This hint was replaced
+by a mod!
+
+Mods can swap any file the
+game loads. See MODDING.md.
+~
