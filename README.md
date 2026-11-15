@@ -20,7 +20,7 @@ What it adds:
 
 No game code, graphics, sound, video or disc files are included or ever will be. You need your own copy of the game.
 Everything the build produces from your disc (the extracted files, the generated C code and `Rugrats.exe`) stays on
-your computer. **Do not share the built `Rugrats.exe` or any files from `build/`:** they contain the game.
+your computer.
 
 ## What you need
 
