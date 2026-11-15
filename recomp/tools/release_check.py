@@ -10,6 +10,11 @@ usage:
 
 Personal strings (names, e-mail, local paths) to refuse can be listed one per line in
 `release_private_patterns.txt` next to the repo root; that file is never committed.
+
+E-mail addresses: git stores the author's and committer's address in every commit (and the tagger's in an annotated
+tag), and they become public on push. Only GitHub noreply addresses (`...@users.noreply.github.com`) are accepted
+there; commit and tag messages may only contain noreply addresses (e.g. a Co-Authored-By trailer). The commit
+identity is checked before each commit (git var), and every pushed commit and tag again.
 Exit code 0 = clean, 1 = refused (with the reasons printed).
 """
 import os
@@ -32,6 +37,8 @@ NUM_ROW = re.compile(rb"^\s*(-?(0x)?[0-9a-fA-F]+[uU]?,\s*){8,}")  # a row of a n
 BLOB = re.compile(rb"[A-Za-z0-9+/=]{200,}")                  # base64 / hex dumps
 # Hardware constant tables we wrote from the psx-spx documentation (allowed by name, with a row limit).
 TABLE_OK = {"recomp/runtime/spu.c": 70, "recomp/runtime/mdec.c": 12}
+NOREPLY = re.compile(r"[^@\s<>]+@users\.noreply\.github\.com", re.I)   # the only identity e-mail allowed
+EMAIL = re.compile(rb"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
 GENERIC_PRIVATE = [rb"[A-Z]:[\\/]+Users[\\/]+[A-Za-z]", rb"/home/[a-z]", rb"AppData[\\/]+Local[\\/]+Temp"]
 
 
@@ -106,6 +113,69 @@ def check_entries(entries, label):
     return 0
 
 
+def email_ok(addr):
+    return bool(NOREPLY.fullmatch(addr.strip()))
+
+
+def message_bad(text, priv):
+    """reasons a commit / tag message may not be published"""
+    bad = []
+    for m in EMAIL.findall(text):
+        if b"noreply" not in m.lower():
+            bad.append("e-mail address in the message: " + m.decode(errors="replace"))
+    for p in priv:
+        m = p.search(text)
+        if m:
+            bad.append("personal string / local path in the message: " + m.group(0).decode(errors="replace"))
+    return bad
+
+
+def check_identity():
+    """before a commit: the author / committer address git is about to use"""
+    bad = []
+    for var in ("GIT_AUTHOR_IDENT", "GIT_COMMITTER_IDENT"):
+        ident = git("var", var).decode(errors="replace")
+        m = re.search(r"<([^>]*)>", ident)
+        addr = m.group(1) if m else ""
+        if not email_ok(addr):
+            bad.append(f"  {var}: {addr or '(none)'} is not a GitHub noreply address")
+    if bad:
+        print("RELEASE CHECK FAILED (commit identity): your e-mail would be public in the commit.")
+        print("\n".join(bad))
+        print("Fix: git config --local user.email <id>+<user>@users.noreply.github.com (GitHub: Settings > Emails)")
+        return 1
+    print("release check ok (commit identity)")
+    return 0
+
+
+def check_meta(rev, label):
+    """a commit's (or annotated tag's) addresses and message"""
+    priv = private_patterns()
+    bad = []
+    if git("cat-file", "-t", rev).strip() == b"tag":
+        head, _, msg = git("cat-file", "tag", rev).partition(b"\n\n")
+        for line in head.split(b"\n"):
+            if line.startswith(b"tagger "):
+                m = re.search(rb"<([^>]*)>", line)
+                addr = m.group(1).decode(errors="replace") if m else ""
+                if not email_ok(addr):
+                    bad.append(f"  tagger address {addr or '(none)'} is not a GitHub noreply address")
+    else:
+        ae, ce, msg = git("log", "-1", "--format=%ae%x00%ce%x00%B", rev).split(b"\0", 2)
+        for who, addr in (("author", ae), ("committer", ce)):
+            a = addr.decode(errors="replace")
+            if not email_ok(a):
+                bad.append(f"  {who} address {a or '(none)'} is not a GitHub noreply address")
+    bad += ["  " + b for b in message_bad(msg, priv)]
+    if bad:
+        print(f"RELEASE CHECK FAILED ({label}): an e-mail address or personal string would be public.")
+        print("\n".join(bad))
+        print("Fix it before pushing (git commit --amend --reset-author, or rewrite history). See PUBLISHING.md.")
+        return 1
+    print(f"release check ok ({label}: identity and message)")
+    return 0
+
+
 def tree_entries(rev):
     out = git("ls-tree", "-r", "-z", rev).split(b"\0")
     ents = []
@@ -134,7 +204,7 @@ def staged_entries():
 def main():
     a = sys.argv[1:]
     if a[:1] == ["--tree"]:
-        return check_entries(tree_entries(a[1]), "commit " + a[1])
+        return check_entries(tree_entries(a[1]), "commit " + a[1]) | check_meta(a[1], "commit " + a[1])
     if a[:1] == ["--push"]:
         zero = "0" * 40
         rc = 0
@@ -143,12 +213,15 @@ def main():
             if len(parts) != 4 or parts[1] == zero:
                 continue
             local, remote = parts[1], parts[3]
+            if git("cat-file", "-t", local).strip() == b"tag":   # annotated tag: its tagger and message too
+                rc |= check_meta(local, "pushed tag " + parts[0])
             rng = [local] if remote == zero else [f"{remote}..{local}"]
             # every commit in the push, not only the last one: a file added then deleted stays in history
             for c in git("rev-list", *rng).decode().split():
                 rc |= check_entries(tree_entries(c), "pushed commit " + c[:10])
+                rc |= check_meta(c, "pushed commit " + c[:10])
         return rc
-    return check_entries(staged_entries(), "staged files")
+    return check_entries(staged_entries(), "staged files") | check_identity()
 
 
 if __name__ == "__main__":

@@ -31,16 +31,21 @@ copy of one, or a `.bps` patch (patches carry the changed game bytes; they belon
 1. `.gitignore` is an **allow-list**: everything is ignored except the files above.
 2. `recomp/tools/release_check.py` refuses: files outside the allow-list, non-source file types, binary data,
    generated game code (`build/gen` style), large numeric tables, encoded blobs, files over 256 KB, local paths and
-   the personal strings in `release_private_patterns.txt` (repo root, local only, never committed).
-3. Git hooks run it: `.git/hooks/pre-commit` (staged files) and `.git/hooks/pre-push` (every commit being pushed,
-   not only the last). Hooks live in `.git/` and are not part of the repo: after a fresh clone, put them back:
+   the personal strings in `release_private_patterns.txt` (repo root, local only, never committed). It also refuses
+   any e-mail address that would become public: commit author / committer and tag tagger must be a GitHub noreply
+   address (`<id>+<user>@users.noreply.github.com`, set per repo with `git config --local user.email ...`; GitHub:
+   Settings > Emails), and commit / tag messages may contain no other address (noreply trailers are fine).
+3. Git hooks run it: `.git/hooks/pre-commit` (staged files + the identity git is about to commit with) and
+   `.git/hooks/pre-push` (every commit and annotated tag being pushed, files, addresses and message, not only the
+   last). After a fresh clone, set the noreply `user.email` for the clone too. Hooks live in `.git/` and are not part of the repo: after a fresh clone, put them back:
    ```
    printf '#!/bin/sh\nexec python -I "$(git rev-parse --show-toplevel)/recomp/tools/release_check.py"\n' > .git/hooks/pre-commit
    printf '#!/bin/sh\nexec python -I "$(git rev-parse --show-toplevel)/recomp/tools/release_check.py" --push\n' > .git/hooks/pre-push
    ```
    Never use `git commit --no-verify` or `git push --no-verify`. Never `git add -f`.
 
-Manual check of everything committed: `python -I recomp/tools/release_check.py --tree HEAD`.
+Manual check of everything committed: `python -I recomp/tools/release_check.py --tree HEAD` (files, addresses and
+message of that commit).
 
 ## Before a release
 
