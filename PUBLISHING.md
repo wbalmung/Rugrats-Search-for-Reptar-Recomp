@@ -51,7 +51,9 @@ message of that commit).
 
 - Run the manual check; `git status` must show nothing unexpected.
 - Release assets: source only, plus the **setup bundle** `dist/RugratsRecomp.zip` made by
-  `python -I recomp/tools/make_bundle.py` and by nothing else. It holds our source (the same files git publishes, each
+  `python -I recomp/tools/make_bundle.py` and by nothing else. It holds `RugratsLauncher.exe` (our own start stub,
+  compiled by the script from `recomp/tools/launcher_stub.c`, icon drawn in code: the only exe of ours that may ship),
+  our source (the same files git publishes, each
   passed through the release check), an unchanged copy of Python and of the llvm-mingw compiler with their licence
   texts, and no game data: the user's own disc is still needed. Never build the bundle by hand, never add files to
   it, and never commit `dist/`. Never attach `Rugrats.exe`, game files, saves or screenshots of the game.

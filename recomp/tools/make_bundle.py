@@ -3,7 +3,8 @@
 usage: python -I recomp/tools/make_bundle.py [--out DIR] [--no-zip]
 
 Result (default dist/RugratsRecomp/ and dist/RugratsRecomp.zip next to the repo's recomp/ folder):
-  Launcher.bat    double-click start; uses python\\ and toolchain\\ below, so the PC needs nothing installed
+  RugratsLauncher.exe  double-click start (no console; built here from recomp/tools/launcher_stub.c + a drawn icon)
+  Launcher.bat    the same as a batch file; both use python\\ and toolchain\\ below, so the PC needs nothing installed
   recomp/ ...     the same source files git would publish (every file goes through release_check first)
   python/         copy of the Python this script runs with (python.org build with tcl/tk), trimmed
   toolchain/      llvm-mingw (clang + lld + x86_64 Windows libraries), the pinned release below, trimmed
@@ -166,6 +167,98 @@ def test_compile(out):
     step("toolchain: test program compiled, linked and ran")
 
 
+def draw_icon(size):
+    """Our own app icon (no game artwork): a purple rounded square in the launcher's colours with a white "R".
+    Returns bottom-up BGRA rows. Drawn with 4x4 supersampling."""
+    top, bot = (0x3b, 0x1a, 0x7e), (0xa8, 0x55, 0xf7)   # launcher.py C["head_a"] / C["head_b"]
+
+    def seg_dist(px, py, ax, ay, bx, by):
+        dx, dy = bx - ax, by - ay
+        t = max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy)))
+        return ((px - ax - t * dx) ** 2 + (py - ay - t * dy) ** 2) ** 0.5
+
+    def in_square(x, y):
+        r, lo, hi = 0.2, 0.04, 0.96
+        cx, cy = min(max(x, lo + r), hi - r), min(max(y, lo + r), hi - r)
+        return (x - cx) ** 2 + (y - cy) ** 2 <= r * r and lo <= x <= hi and lo <= y <= hi
+
+    def in_r(x, y):
+        if 0.30 <= x <= 0.42 and 0.21 <= y <= 0.80:                      # stem
+            return True
+        if 0.36 <= x <= 0.48 and (0.21 <= y <= 0.325 or 0.415 <= y <= 0.53):   # bowl's top and middle bars
+            return True
+        d = ((x - 0.48) ** 2 + (y - 0.37) ** 2) ** 0.5                     # bowl's round right side
+        if x >= 0.48 and 0.045 <= d <= 0.16:
+            return True
+        return seg_dist(x, y, 0.49, 0.50, 0.68, 0.80) <= 0.057           # leg
+
+    n = 4
+    rows = []
+    for py in range(size - 1, -1, -1):          # bottom-up
+        row = bytearray()
+        for px in range(size):
+            a = w = 0
+            for sy in range(n):
+                for sx in range(n):
+                    x, y = (px + (sx + 0.5) / n) / size, (py + (sy + 0.5) / n) / size
+                    if in_square(x, y):
+                        a += 1
+                        w += in_r(x, y)
+            t = py / max(1, size - 1)
+            base = [top[i] + (bot[i] - top[i]) * t for i in range(3)]
+            if a:
+                f = w / a
+                col = [round(base[i] * (1 - f) + 255 * f) for i in range(3)]
+            else:
+                col = [0, 0, 0]
+            row += bytes((col[2], col[1], col[0], round(255 * a / (n * n))))
+        rows.append(bytes(row))
+    return rows
+
+
+def icon_res(path):
+    """Write the icon as a Windows .res file (RT_ICON images + one RT_GROUP_ICON), which lld links directly."""
+    import struct
+
+    def entry(rtype, rid, data, flags):
+        hdr = struct.pack("<IIHHHHIHHII", len(data), 32, 0xFFFF, rtype, 0xFFFF, rid, 0, flags, 0x0409, 0, 0)
+        return hdr + data + b"\0" * (-len(data) % 4)
+    out = struct.pack("<IIHHHHIHHII", 0, 32, 0xFFFF, 0, 0xFFFF, 0, 0, 0, 0, 0, 0)   # the empty first entry
+    group = b""
+    sizes = (16, 24, 32, 48, 64, 256)
+    for i, s in enumerate(sizes, 1):
+        rows = draw_icon(s)
+        mask_row = b"\0" * (((s + 31) // 32) * 4)            # alpha does the work; AND mask all 0
+        img = struct.pack("<IiiHHIIiiII", 40, s, s * 2, 1, 32, 0, 0, 0, 0, 0, 0) + b"".join(rows) + mask_row * s
+        out += entry(3, i, img, 0x1010)
+        group += struct.pack("<BBBBHHIH", s % 256, s % 256, 0, 0, 1, 32, len(img), i)
+    out += entry(14, 1, struct.pack("<HHH", 0, 1, len(sizes)) + group, 0x1030)
+    with open(path, "wb") as f:
+        f.write(out)
+
+
+def build_launcher_exe(out):
+    """RugratsLauncher.exe (recomp/tools/launcher_stub.c): double-click start without a console window, compiled
+    here with the bundled clang, then started once in wait mode with --check to prove it finds Python + launcher."""
+    tmp = os.path.join(out, "_stub")
+    os.makedirs(tmp)
+    res = os.path.join(tmp, "icon.res")
+    icon_res(res)
+    exe = os.path.join(out, "RugratsLauncher.exe")
+    env = {k: v for k, v in os.environ.items() if k.upper() in ("SYSTEMROOT", "TEMP", "TMP")}
+    env["PATH"] = os.path.join(os.environ.get("SYSTEMROOT", r"C:\Windows"), "System32")
+    r = subprocess.run([os.path.join(out, "toolchain", "bin", "clang.exe"), "-O2", "-municode", "-mwindows",
+                        os.path.join(out, "recomp", "tools", "launcher_stub.c"), res, "-o", exe, "-s"],
+                       capture_output=True, text=True, env=env)
+    if r.returncode:
+        sys.exit("could not build RugratsLauncher.exe:\n" + r.stdout + r.stderr)
+    r = subprocess.run([exe, "--check"], capture_output=True, text=True, env=dict(env, RUGRATS_STUB_WAIT="1"))
+    if r.returncode:
+        sys.exit(f"RugratsLauncher.exe --check failed (exit {r.returncode})")
+    shutil.rmtree(tmp)
+    step("launcher: RugratsLauncher.exe built and started the bundled launcher (--check ok)")
+
+
 def write_licenses(out):
     d = os.path.join(out, "licenses")
     os.makedirs(d)
@@ -189,6 +282,8 @@ def refuse_game_data(out):
         for n in names:
             if release_check.MOD_INI.fullmatch(rel + "/" + n):   # example mods we wrote (checked by release_check)
                 continue
+            if rel == "." and n == "RugratsLauncher.exe":            # our own stub, built above from launcher_stub.c
+                continue
             if n.lower() == "rugrats.exe" or (not third and (ours.search(n) or n.lower().endswith((".exe", ".dll")))):
                 bad.append(os.path.join(rel, n))
     if bad:
@@ -210,6 +305,7 @@ def main():
     copy_python(os.path.join(out, "python"))
     copy_toolchain(os.path.join(out, "toolchain"), os.path.join(ROOT, "dist", "cache", "llvm-mingw"))
     test_compile(out)
+    build_launcher_exe(out)
     write_licenses(out)
     refuse_game_data(out)
     size = sum(os.path.getsize(os.path.join(d, n)) for d, _, ns in os.walk(out) for n in ns)

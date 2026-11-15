@@ -27,14 +27,16 @@ your computer. **Do not share the built `Rugrats.exe` or any files from `build/`
 - Windows 10 or 11 (x64)
 - [Python 3](https://www.python.org/) and clang for Windows, e.g. [llvm-mingw](https://github.com/mstorsjo/llvm-mingw)
   (on `PATH`, or pass `--cc <path>`). **The release zip brings both** (folders `python/` and `toolchain/`, licences in
-  `licenses/`), so with it there is nothing to install: unzip, double-click `Launcher.bat`.
+  `licenses/`), so with it there is nothing to install: unzip, double-click `RugratsLauncher.exe`.
 - A disc image of **Rugrats: Search for Reptar (USA)**, SLUS-00650, dumped from your own disc as `.bin` + `.cue`.
   The build checks it: SHA1 of the `.bin` must be `b547ef42310a5b04ccfd62d12aa9c41af1c5d6f5`. Other versions and
   modified images are refused.
 
 ## Install and play (launcher)
 
-Double-click **`Launcher.bat`**, or run:
+From the release zip: extract the whole zip into a folder, then double-click **`RugratsLauncher.exe`**
+(`Launcher.bat` does the same). Windows may warn that the app is from an unknown publisher (it is not code-signed):
+choose *More info* > *Run anyway*. From a source checkout: double-click `Launcher.bat`, or run:
 
 ```
 python -I recomp/launcher.py
