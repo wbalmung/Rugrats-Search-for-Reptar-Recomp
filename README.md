@@ -1,8 +1,9 @@
 # Rugrats: Search for Reptar — native PC port (static recompilation)
 
-An unofficial native Windows version of the 1998 PlayStation game *Rugrats: Search for Reptar* (USA). It is not an
-emulator: a build tool translates the game's code from **your own disc image** into C and compiles it into a
-Windows program, with a small runtime standing in for the PS1 hardware.
+An unofficial native Windows version of the 1998 PlayStation game *Rugrats: Search for Reptar* (USA). It is not a
+traditional emulator: a build tool statically recompiles the game's code from **your own disc image** into C ahead
+of time, which is compiled into a native x86 Windows program. A runtime recreates the PS1 hardware the game talks to
+(graphics, sound, CD, video), the same approach as other recompilation projects such as N64Recomp.
 
 What it adds:
 
