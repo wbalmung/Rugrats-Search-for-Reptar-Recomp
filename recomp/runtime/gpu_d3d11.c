@@ -88,6 +88,32 @@ static const char hw_src[] =
     "Texture2D<float> oz : register(t1);\n"
     "float OZL(float2 p, uint s) { return oz.Load(int3(int2(p), 0)); }\n"
     "#endif\n"
+    /* MSAA: the oz readers shade once per pixel and test oz for every sample, writing the passing samples as
+       SV_Coverage (ANDed with the raster coverage by the hardware). They used to run per sample (SV_SampleIndex),
+       which made 4x MSAA shade objects and most room pixels 4 times: 9x + 4x MSAA 4.3 -> ~3 ms GPU (goose level,
+       2026-11-15). Depth tests use the pixel centre's depth, like every other MS shader. */
+    "bool ohid(P i, float o) {\n"
+    "  float iz = i.p.z * 64.0, k = iz * asfloat(cfg.z);\n"
+    "  uint id = (i.a.z >> 16) & 0x1FFFu, oi = asuint(o) & 0x1FFFu;\n"
+    "  if (o > 0 && k < 0.999 && iz / (1.0 - k) < o &&\n"
+    "      ((id != 0u && oi == id) || ((oi & 0x1000u) != 0u && (i.a.z & 0x20000000u) != 0u) ||\n"
+    "       (oi != 0u && (i.a.z & 0x80000000u) != 0u))) {\n"
+    "    float kf = iz * (asfloat(cfg.z) + ex.w);\n"
+    "    if ((oi == id && id != 0u) || (i.a.z & 0x40000000u) == 0u || (kf < 0.999 && iz / (1.0 - kf) < o)) return true;\n"
+    "  }\n"
+    "  return false;\n"
+    "}\n"
+    "#ifdef MS\n"
+    "struct OTM { float4 c : SV_Target0; float4 f : SV_Target1; float d : SV_Depth; uint m : SV_Coverage; };\n"
+    "struct OM { float4 c : SV_Target0; float4 f : SV_Target1; uint m : SV_Coverage; };\n"
+    "uint NSM() { uint w, h, n; oz.GetDimensions(w, h, n); return n; }\n"
+    "OTM ps_to(P i) {\n"
+    "  OT t = ps_test(i); uint m = 0u, n = NSM();\n"
+    "  [loop] for (uint s = 0u; s < n; s++) if (!ohid(i, OZL(i.p.xy, s))) m |= 1u << s;\n"
+    "  if (m == 0u) discard;\n"
+    "  OTM r; r.c = t.c; r.f = t.f; r.d = t.d; r.m = m; return r;\n"
+    "}\n"
+    "#else\n"
     "OT ps_to(P i SIP) {\n"
     "  OT t = ps_test(i);\n"
     "  float iz = i.p.z * 64.0, k = iz * asfloat(cfg.z), o = OZL(i.p.xy, SI);\n"
@@ -104,6 +130,7 @@ static const char hw_src[] =
     "  }\n"
     "  return t;\n"
     "}\n"
+    "#endif\n"
     /* oz draws (render target = oz): TW store iz / (1 - iz * k2), k2 = (room gap - object gap) / 4096 in cfg.w (blend
        MAX); room pieces and fills clear it (0) where they paint. SV_Depth as in their colour draw (ps_test / ps_h). */
     "struct OZ { float o : SV_Target0; float d : SV_Depth; };\n"
@@ -140,9 +167,55 @@ static const char hw_src[] =
     "}\n"
     "OZ ps_om(P i) { OT t = ps_test(i); OZ z; z.d = t.d; z.o = rmark(i); return z; }\n"
     "OZ ps_omh(P i) { O o = shade(i); OZ z; z.d = 0.999; z.o = rmark(i); return z; }\n"
+    "#ifdef MS\n"   /* per pixel + per-sample coverage (see ps_to); rzb's gradients are taken once, outside the loop */
+    "bool rhidz(P i, float o, float rz) {\n"
+    "  float k = 1.0 + o * ex.x;\n"
+    "  if (o <= 0 || (asuint(o) & 0x1FFFu) == 0u || k <= 0.001) return false;\n"
+    "  float ot = o / k;\n"
+    "  return ot >= rz && (ex.z == 0.0 || ot <= zlim(i));\n"
+    "}\n"
+    "uint RM(P i) {\n"
+    "  float rz = rzb(i); uint m = 0u, n = NSM();\n"
+    "  [loop] for (uint s = 0u; s < n; s++) if (!rhidz(i, OZL(i.p.xy, s), rz)) m |= 1u << s;\n"
+    "  if (m == 0u) discard;\n"
+    "  return m;\n"
+    "}\n"
+    "OTM ps_rt(P i) { uint m = RM(i); OT t = ps_test(i); OTM r; r.c = t.c; r.f = t.f; r.d = t.d; r.m = m; return r; }\n"
+    "OTM ps_rh(P i) { uint m = RM(i); OT t = ps_h(i); OTM r; r.c = t.c; r.f = t.f; r.d = t.d; r.m = m; return r; }\n"
+    "OM ps_r(P i) { uint m = RM(i); O t = shade(i); OM r; r.c = t.c; r.f = t.f; r.m = m; return r; }\n"
+    "#else\n"
     "OT ps_rt(P i SIP) { if (rhid(i, SI)) discard; return ps_test(i); }\n"
     "OT ps_rh(P i SIP) { if (rhid(i, SI)) discard; return ps_h(i); }\n"
     "O ps_r(P i SIP) { if (rhid(i, SI)) discard; return shade(i); }\n"
+    "#endif\n"
+    /* Early-Z depth check (2026-11-15, RUGRATS_EARLYZ, default 1; only with the room test pass): the testers above
+       write SV_Depth = iz / (1 - iz k) / 64 (pushed nearer by the gap), which turns off the GPU's early depth test,
+       so every hidden pixel (hedges behind a fence: GPU 3.6 ms looking up in Grandpa's Teeth) was fully shaded. The
+       room depth pass instead stores S' = S / (1 + 64 S k) (ps_pw; same order, so "nearest wins" is unchanged) and
+       the testers compare their plain depth: z / (1 - 64 z k) >= S  <=>  z >= S / (1 + 64 S k). Testers then need
+       no SV_Depth: ps (for ps_test), ps_r (for ps_rt), ps_toe, and the oz draws ps_owe / ps_oce / ps_ome. The slope
+       bias the rasterizer gave room writes (rs_w) is applied here, as rzb does (SV_Depth skips the rasterizer bias). */
+    "float ps_pw(P i) : SV_Depth {\n"
+    "  float zb = max(i.p.z - max(abs(ddx(i.p.z)), abs(ddy(i.p.z))) * ex.y / 64.0, 0.0);\n"
+    "  O o = shade(i);\n"
+    "  return zb / (1.0 + 64.0 * zb * asfloat(cfg.z));\n"
+    "}\n"
+    "#ifdef MS\n"
+    "OM ps_toe(P i) {\n"
+    "  O t = shade(i); uint m = 0u, n = NSM();\n"
+    "  [loop] for (uint s = 0u; s < n; s++) if (!ohid(i, OZL(i.p.xy, s))) m |= 1u << s;\n"
+    "  if (m == 0u) discard;\n"
+    "  OM r; r.c = t.c; r.f = t.f; r.m = m; return r;\n"
+    "}\n"
+    "#else\n"
+    "O ps_toe(P i) { O t = shade(i); if (ohid(i, OZL(i.p.xy, 0u))) discard; return t; }\n"
+    "#endif\n"
+    "float ps_owe(P i) : SV_Target0 {\n"
+    "  O t = shade(i); float iz = i.p.z * 64.0, k = iz * asfloat(cfg.w);\n"
+    "  return asfloat((asuint(k >= 0.99 ? 1e29 : iz / (1.0 - k)) & ~0x1FFFu) | ((i.a.z >> 16) & 0x1FFFu));\n"
+    "}\n"
+    "float ps_oce(P i) : SV_Target0 { O t = shade(i); return 0; }\n"
+    "float ps_ome(P i) : SV_Target0 { O t = shade(i); return rmark(i); }\n"
     /* one triangle texel at texel position q, exactly as the centre lookup in shade (uv box clamp, texture window,
        4/8/15-bit, CLUT); for the anisotropic taps */
     "uint TX(float2 q, uint tp, uint lim, uint ca, uint depth) {\n"
@@ -295,9 +368,10 @@ static ID3D11PixelShader *ps_res, *ps_cpy;
 static ID3D11Buffer *kcb;
 /* every hw_src shader in a single-sample and an MSAA (MS) build; the active pointers (vs, ps, ps_t, ...) are set
    from these in hw_begin. Index 0 = vertex shader. */
-#define NSH 13
+#define NSH 18
 static const char *const sh_name[NSH] = { "vs_main", "ps_main", "ps_test", "ps_h", "ps_to", "ps_ow", "ps_oc", "ps_och",
-                                          "ps_rt", "ps_rh", "ps_r", "ps_om", "ps_omh" };
+                                          "ps_rt", "ps_rh", "ps_r", "ps_om", "ps_omh",
+                                          "ps_pw", "ps_toe", "ps_owe", "ps_oce", "ps_ome" };
 static void *sh_ss[NSH], *sh_ms[NSH];
 static void **sh_slot(int k);
 static int ms_shaders;                   /* 0 not tried, 1 ok, -1 failed */
@@ -308,6 +382,8 @@ static ID3D11PixelShader *ps_h;         /* HUD protection test (SV_Depth 0.999) 
 static ID3D11PixelShader *ps_to, *ps_ow, *ps_oc, *ps_och;   /* object sort fix: object tester / oz store / oz clear */
 static ID3D11PixelShader *ps_rt, *ps_rh, *ps_r;   /* room over object: room testers that skip nearer object pixels */
 static ID3D11PixelShader *ps_om, *ps_omh;         /* room over object: oz draw of a room run (room mark, MAX) */
+static ID3D11PixelShader *ps_pw, *ps_toe, *ps_owe, *ps_oce, *ps_ome;   /* early-Z depth check (see ps_pw) */
+static int early_z(void) { static int z = -1; if (z < 0) { const char *e = getenv("RUGRATS_EARLYZ"); z = e ? atoi(e) != 0 : 1; } return z; }
 int gpu_room_obj(void);
 float gpu_room_obj_k(void);
 float gpu_floor_k(void);
@@ -395,9 +471,11 @@ static int init_shared(void) {
             ID3D10Blob_Release(bt);
         }
         /* object sort fix shaders; any missing: TW objects are only tested (no object sort fix) */
-        const char *on[9] = { "ps_to", "ps_ow", "ps_oc", "ps_och", "ps_rt", "ps_rh", "ps_r", "ps_om", "ps_omh" };
-        ID3D11PixelShader **op[9] = { &ps_to, &ps_ow, &ps_oc, &ps_och, &ps_rt, &ps_rh, &ps_r, &ps_om, &ps_omh };
-        for (int k = 0; k < 9; k++) {
+        const char *on[14] = { "ps_to", "ps_ow", "ps_oc", "ps_och", "ps_rt", "ps_rh", "ps_r", "ps_om", "ps_omh",
+                               "ps_pw", "ps_toe", "ps_owe", "ps_oce", "ps_ome" };
+        ID3D11PixelShader **op[14] = { &ps_to, &ps_ow, &ps_oc, &ps_och, &ps_rt, &ps_rh, &ps_r, &ps_om, &ps_omh,
+                                       &ps_pw, &ps_toe, &ps_owe, &ps_oce, &ps_ome };
+        for (int k = 0; k < 14; k++) {
             bt = NULL;
             if (compile(comp, on[k], "ps_4_0", &bt)) {
                 ID3D11Device_CreatePixelShader(dev, ID3D10Blob_GetBufferPointer(bt), ID3D10Blob_GetBufferSize(bt), NULL, op[k]);
@@ -496,7 +574,8 @@ static void rel(void **p) {
 static void **sh_slot(int k) {
     static void **const s[NSH] = { (void **)&vs, (void **)&ps, (void **)&ps_t, (void **)&ps_h, (void **)&ps_to, (void **)&ps_ow,
                                    (void **)&ps_oc, (void **)&ps_och, (void **)&ps_rt, (void **)&ps_rh, (void **)&ps_r,
-                                   (void **)&ps_om, (void **)&ps_omh };
+                                   (void **)&ps_om, (void **)&ps_omh, (void **)&ps_pw, (void **)&ps_toe, (void **)&ps_owe,
+                                   (void **)&ps_oce, (void **)&ps_ome };
     return s[k];
 }
 
@@ -889,6 +968,8 @@ void hw_flush(void) {
        rule as the CPU renderer, except a room piece can also be hidden by a nearer one drawn later in the batch
        (which paints over it anyway). Plain depth testing only. */
     const int rtest = gpu_room_test() && dsv && rs_w;
+    /* early-Z depth check (see ps_pw in hw_src): only with the room test pass, which then writes the gap-shifted depth */
+    const int ez = rtest && early_z() && ps_pw && ps_toe && ps_owe && ps_oce && ps_ome;
     if (rtest) {
         int any = 0;
         for (int i = 0; i < nruns && !any; i++) any = runs[i].dm == HW_DM_WRITE || runs[i].dm == HW_DM_WNT;
@@ -904,7 +985,8 @@ void hw_flush(void) {
                 if (m != pm) {
                     pm = m;
                     ID3D11DeviceContext_OMSetDepthStencilState(ctx, m == HW_DM_WRITE ? ds_pre : ds_write, 0);
-                    ID3D11DeviceContext_RSSetState(ctx, m == HW_DM_WRITE ? rs_w : rs);
+                    ID3D11DeviceContext_RSSetState(ctx, m == HW_DM_WRITE && !ez ? rs_w : rs);
+                    if (ez) ID3D11DeviceContext_PSSetShader(ctx, m == HW_DM_WRITE ? ps_pw : ps, NULL, 0);
                 }
                 ID3D11DeviceContext_RSSetScissorRects(ctx, 1, &sc);
                 ID3D11DeviceContext_Draw(ctx, (UINT)runs[i].n, (UINT)runs[i].first);
@@ -928,8 +1010,11 @@ void hw_flush(void) {
             ID3D11DeviceContext_OMSetDepthStencilState(ctx, tst || htst ? ds_test : wr || hud ? ds_write : ds_off, 0);
             const int obj = dmode == HW_DM_TEST || dmode == HW_DM_TW;
             const int room = ro && (dmode == HW_DM_WRITE || (dmode == HW_DM_WNT && gpu_room_obj_wnt()));   /* skips nearer object pixels */
-            ID3D11DeviceContext_PSSetShader(ctx, htst ? (room ? ps_rh : ps_h) : obj && ozon ? ps_to :
-                                                 tst && ps_t ? (room ? ps_rt : ps_t) : room ? ps_r : ps, NULL, 0);
+            if (ez)   /* testers without SV_Depth: ps_test -> ps, ps_rt -> ps_r, ps_to -> ps_toe */
+                ID3D11DeviceContext_PSSetShader(ctx, htst ? (room ? ps_rh : ps_h) : obj && ozon ? ps_toe : room ? ps_r : ps, NULL, 0);
+            else
+                ID3D11DeviceContext_PSSetShader(ctx, htst ? (room ? ps_rh : ps_h) : obj && ozon ? ps_to :
+                                                     tst && ps_t ? (room ? ps_rt : ps_t) : room ? ps_r : ps, NULL, 0);
             ID3D11DeviceContext_RSSetState(ctx, wr && dmode != HW_DM_CLEAR ? rs_w : rs);
         }
         D3D11_RECT sc = { runs[i].x0 * S, runs[i].y0 * S, (runs[i].x1 + 1) * S, (runs[i].y1 + 1) * S };
@@ -953,7 +1038,8 @@ void hw_flush(void) {
         const int m = runs[i].dm;
         if (ozon && !runs[i].sub && (m == HW_DM_TW || m == HW_DM_WRITE || m == HW_DM_WNT || m == HW_DM_CLEAR)) {
             const int rm = ro && (m == HW_DM_WRITE || (m == HW_DM_WNT && gpu_room_obj_wnt()));   /* room mark (MAX) instead of a clear */
-            ID3D11PixelShader *zp = m == HW_DM_TW ? ps_ow : (m == HW_DM_WNT && rtest && ps_h) ? (rm ? ps_omh : ps_och) : rm ? ps_om : ps_oc;
+            ID3D11PixelShader *zp = m == HW_DM_TW ? (ez ? ps_owe : ps_ow) : (m == HW_DM_WNT && rtest && ps_h) ? (rm ? ps_omh : ps_och) :
+                                    rm ? (ez ? ps_ome : ps_om) : ez ? ps_oce : ps_oc;
             const int zt = m == HW_DM_TW || (rtest && (m == HW_DM_WRITE || (m == HW_DM_WNT && ps_h)));
             ID3D11ShaderResourceView *none = NULL;
             ID3D11DeviceContext_PSSetShaderResources(ctx, 1, 1, &none);
