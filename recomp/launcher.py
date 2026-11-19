@@ -215,6 +215,8 @@ SETTINGS = [
      "On: walking into a wall bonks (sound, short loss of control). Off: you just stop at the wall."),
     ("Enhancements", "Walk After Shooting", "game", "shot_walk", 1, BOOL, ["Original", "Fixed"],
      "Fixed: after firing while walking, the walk animation goes back to normal speed. Original: it stays double speed."),
+    ("Enhancements", "Ceiling Fan", "game", "fan_still", 1, BOOL, ["Original", "Fixed"],
+     "Fixed: in Let There Be Light the power is out, so the kitchen ceiling fan stands still. Original: it keeps spinning."),
     ("Enhancements", "Final Level Behavior", "game", "final_level", 1, BOOL, ["Default", "Enhanced"],
      "Enhanced: after the last puzzle piece you stay in the level; the TV in the house starts Reptar 2010. Default: straight on."),
 ]

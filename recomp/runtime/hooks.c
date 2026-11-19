@@ -3640,12 +3640,13 @@ int rt_hook_8008864c(void) {
    obj+0x2c/+0x2e/+0x30 (0x20 per vblank around y for the fan) x vblanks since the last call (VSync(-1) - obj+0x64) to the
    angles obj+0x24/+0x26/+0x28. Here, only in db 12 and only for model 94, the speeds are zeroed before the callback
    runs, so the blades keep their spawn angle. Every other level and every other spinning prop is untouched.
-   RUGRATS_FANSTILL=0 = old behaviour. */
+   F1 Enhancements "Ceiling Fan" (opt.fan_still, ini [game] fan_still, RUGRATS_FANSTILL): switched back to Original
+   while the level runs, the fan gets its speed back (the game's value seen before zeroing; 32 around y if this run
+   never saw it, e.g. after loading a state saved with the fan stopped). */
 #define FAN_DB    12
 #define FAN_MODEL 94u
 int rt_hook_8004e2ac(void) {
-    static int on = -1;
-    if (on < 0) { const char *e = getenv("RUGRATS_FANSTILL"); on = !(e && *e == '0'); }
+    static int16_t spd[3] = {32, 0, 0};   /* the fan's own speeds (last seen non-zero) */
     const uint32_t obj = cpu.r[4];
     static int lg = -1;   /* debug: RUGRATS_FANLOG=1 logs each spinner call (db, obj, model, speeds, angles) */
     if (lg < 0) lg = getenv("RUGRATS_FANLOG") != NULL;
@@ -3654,8 +3655,15 @@ int rt_hook_8004e2ac(void) {
                 (int)mem_r32(0x800C5678u), obj, mem_r16(obj + 0x96), (int16_t)mem_r16(obj + 0x2c),
                 (int16_t)mem_r16(obj + 0x2e), (int16_t)mem_r16(obj + 0x30), mem_r16(obj + 0x24), mem_r16(obj + 0x26),
                 mem_r16(obj + 0x28));
-    if (on && (int32_t)mem_r32(0x800C5678u) == FAN_DB && (obj >> 24) == 0x80u && mem_r16(obj + 0x96) == FAN_MODEL) {
-        mem_w16(obj + 0x2c, 0); mem_w16(obj + 0x2e, 0); mem_w16(obj + 0x30, 0);
+    if ((int32_t)mem_r32(0x800C5678u) == FAN_DB && (obj >> 24) == 0x80u && mem_r16(obj + 0x96) == FAN_MODEL) {
+        const int moving = mem_r16(obj + 0x2c) | mem_r16(obj + 0x2e) | mem_r16(obj + 0x30);
+        if (opt.fan_still) {
+            if (moving)
+                for (int i = 0; i < 3; i++) spd[i] = (int16_t)mem_r16(obj + 0x2c + 2 * i);
+            mem_w16(obj + 0x2c, 0); mem_w16(obj + 0x2e, 0); mem_w16(obj + 0x30, 0);
+        } else if (!moving) {
+            for (int i = 0; i < 3; i++) mem_w16(obj + 0x2c + 2 * i, (uint16_t)spd[i]);
+        }
     }
     return 0;
 }

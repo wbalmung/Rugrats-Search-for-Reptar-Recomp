@@ -165,6 +165,8 @@ typedef struct {
     int rcam_override;   /* 1 = right-stick camera also in levels where it is off by default (hooks.c rcam_excluded) */
     int wall_bonk;       /* 1 = original: walking into a wall bonks (anim, sound, short lock); 0 = just stop */
     int shot_walk;       /* 1 = Fixed: the walk goes back to 1x after shooting while walking; 0 = original (stays 2x) */
+    int fan_still;       /* 1 = Fixed: kitchen ceiling fan stands still in Let There Be Light (db 12, power out),
+                            0 = original (keeps spinning); hooks.c rt_hook_8004e2ac */
     int final_level;     /* Final Level Behavior. 1 = Enhanced: after the last puzzle piece, a "Final level unlocked!"
                             screen, then stay in the level where the bar was taken; the hub TV is the entrance to the
                             final level (db 7) once all 12 pieces are placed. 0 = Default (original: straight on to db 7) */

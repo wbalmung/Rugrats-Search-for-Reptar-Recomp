@@ -605,10 +605,8 @@ logs every list packet with its layer and each frame's room point count.
 - `RUGRATS_MOVERSMOOTH=0` turns off platform smoothing (default on: elevators and moving platforms, which the game
   moves in fixed 1/30 s steps, glide between those steps at high fps). `RUGRATS_TIMERLOG=1` logs every 1/30 s timer
   callback the game fires (frame, object, callback).
-- The kitchen ceiling fan stands still in Let There Be Light (the power is out in that level; the original kept it
-  turning). Only that level's fan model is stopped; spinning props in every other level are unchanged.
-  `RUGRATS_FANSTILL=0` = old behaviour, `RUGRATS_FANLOG=1` logs every spinning-prop update (level, object, model,
-  speeds, angles).
+- `RUGRATS_FANSTILL=0/1` sets the Ceiling Fan option (Enhancements), `RUGRATS_FANLOG=1` logs every spinning-prop
+  update (level, object, model, speeds, angles).
 - `RUGRATS_AISMOOTH=0` turns off companion smoothing (default on: characters the game updates in a 1/30 s timer, like
   Chuckie following Tommy, get their running animation, position and heading drawn in between those updates at high
   fps; only the picture changes, the game's own state stays exactly as it was). `RUGRATS_AISMOOTHLOG=1` logs each
@@ -840,6 +838,13 @@ layers. Firing while walking (Angelica's laser) sets anim 0x27 at 0x2000; when t
 anims resume at that speed, so the walk plays at 2x until the player stops (same in PCSX-Redux). Fixed: a hook on
 `80057214` notes the shot's speed write, and the walk body hook (`8005e1f4`) puts 0x1000 (0x800 for model 8) back on the
 first walking frame where neither layer (`obj+0xa8`, `obj+0xb4`) plays 0x27/0x32.
+
+Ceiling Fan (Enhancements page, ini `[game] fan_still`: 1 Fixed = default, 0 Original; `RUGRATS_FANSTILL`, debug
+`RUGRATS_FANLOG=1`): Let There Be Light (db 12) is set during a power cut, but the original keeps the kitchen ceiling
+fan turning. The fan is a generic spinning prop: its 1/30 s timer callback `8004e2ac` adds the s16 speeds
+`obj+0x2c/+0x2e/+0x30` x vblanks to the angles `obj+0x24/+0x26/+0x28`. Fixed: a hook zeroes those speeds for model 94
+(`obj+0x96`) in db 12 only, so the blades keep their spawn angle; other spinning props and other levels are untouched.
+Switching back to Original in the level gives the fan its speed again. Idea by flamespeedy.
 
 Final Level Behavior (Enhancements page, ini `[game] final_level`: 1 Enhanced = default, 0 Default = original;
 `RUGRATS_FINALLEVEL`). Enhanced = three parts, all on or all off: (1) stay in the level after the last piece, (2) a
