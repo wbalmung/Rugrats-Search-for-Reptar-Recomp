@@ -534,7 +534,7 @@ logs every list packet with its layer and each frame's room point count.
   ones: `RUGRATS_OCCL=0` = off, `RUGRATS_OCCLCHUNK=0` / `RUGRATS_OCCLOBJ=0` = only that kind off,
   `RUGRATS_OCCLSYNC=1` = wait for each answer (repeatable tests), `RUGRATS_OCCLLOG=1`.
   **Extended View Distance** (F1 Enhancements, ini `[video] view_ext`, `RUGRATS_VIEWEXT`): 3 Full (no
-  limit), 2 Medium, 1 Short (default since 2026-11-18, for weaker PCs), 0 Off. The low-wall and over-wall rules only bring in or widen a room whose box lies
+  limit), 2 Medium (default since 2026-11-18: Full costs ~2x the CPU in long Reptar 2010 streets for little picture), 1 Short, 0 Off. The low-wall and over-wall rules only bring in or widen a room whose box lies
   within 12000 (Medium) / 6000 (Short) units of the camera eye; Off = no extra rooms (the game's own culling).
   The game's own room passes are never changed. Fewer extra rooms = fewer polygons; the far side then can be
   missing again (sky / gap colour over far hedges, far Reptar 2010 streets). `RUGRATS_VIEWDIST=<units>` overrides

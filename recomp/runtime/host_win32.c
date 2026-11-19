@@ -2708,8 +2708,8 @@ static void load_config(void) {
     opt.voice_restore = GetPrivateProfileIntA("audio", "voice_restore", 1, ini) != 0;
     opt.voice_hub = GetPrivateProfileIntA("audio", "voice_hub", 1, ini) != 0;
     opt.voice_golf = GetPrivateProfileIntA("audio", "voice_golf", 1, ini) != 0;
-    opt.view_ext = GetPrivateProfileIntA("video", "view_ext", 1, ini);   /* default Short (weaker PCs) */
-    if (opt.view_ext < 0 || opt.view_ext > 3) opt.view_ext = 1;
+    opt.view_ext = GetPrivateProfileIntA("video", "view_ext", 2, ini);   /* default Medium (user 2026-11-18) */
+    if (opt.view_ext < 0 || opt.view_ext > 3) opt.view_ext = 2;
     opt.bar_roar = GetPrivateProfileIntA("audio", "bar_roar", 1, ini);
     if (opt.bar_roar < 0 || opt.bar_roar > 2) opt.bar_roar = 1;
     opt.wall_bonk = GetPrivateProfileIntA("game", "wall_bonk", 1, ini) != 0;
