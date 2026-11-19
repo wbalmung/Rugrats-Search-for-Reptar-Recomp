@@ -133,6 +133,13 @@ static void make_rtv(void) {
     }
 }
 
+/* frames DXGI may queue ahead of the display (1..3); RUGRATS_LATENCY overrides (test) */
+static int present_latency(void) {
+    static int l = 0;
+    if (!l) { const char *e = getenv("RUGRATS_LATENCY"); l = e ? atoi(e) : 1; if (l < 1) l = 1; if (l > 3) l = 3; }
+    return l;
+}
+
 int d3d_init(HWND w) {
     hwnd = w;
     HMODULE dc = LoadLibraryA("d3dcompiler_47.dll");
@@ -152,7 +159,7 @@ int d3d_init(HWND w) {
     IDXGIFactory2 *fac = NULL;
     ID3D11Device_QueryInterface(dev, &IID_IDXGIDevice1, (void **)&xd);
     if (xd) {
-        IDXGIDevice1_SetMaximumFrameLatency(xd, 1); /* low latency: Present waits for the previous frame */
+        IDXGIDevice1_SetMaximumFrameLatency(xd, (UINT)present_latency()); /* 1: Present waits for the previous frame */
         IDXGIDevice1_GetAdapter(xd, &ad);
     }
     if (ad) IDXGIAdapter_GetParent(ad, &IID_IDXGIFactory2, (void **)&fac);
@@ -171,7 +178,7 @@ int d3d_init(HWND w) {
     d.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
     d.SampleDesc.Count = 1;
     d.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
-    d.BufferCount = 2;
+    d.BufferCount = (UINT)present_latency() + 1;
     d.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
     d.Flags = sc_flags;
     hr = IDXGIFactory2_CreateSwapChainForHwnd(fac, (IUnknown *)dev, hwnd, &d, NULL, NULL, &sc);

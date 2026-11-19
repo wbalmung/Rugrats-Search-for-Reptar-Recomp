@@ -2758,9 +2758,10 @@ static void tri_attr(const Vtx *const t[3], double x, double y, Vtx *w) {
     if (!(w->zs > 0)) w->zs = 1e-12f;   /* > 0 also marks a hi-res-only piece */
 }
 
+unsigned fp_poly;   /* RUGRATS_FRAMEPROF: polygons this present (host_win32.c) */
 static void exec_poly(uint32_t *f) {
     int op = f[0] >> 24;
-    poly_seq++;
+    poly_seq++; fp_poly++;
     if (poly_id_vis < 0) poly_id_vis = getenv("RUGRATS_POLYID") != NULL;
     if (gpu_cmdlog) rt_logf("   #%u %04x\n", poly_seq, (unsigned)((poly_seq * 2654435761u) >> 8) & 0x7FFF);
     int quad = op & 8, tex = op & 4, gour = op & 0x10, semi_on = op & 2, raw = op & 1;

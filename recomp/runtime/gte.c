@@ -283,7 +283,9 @@ static void ws_init(void) {
 }
 
 /* ---- operations ----------------------------------------------------- */
+unsigned fp_rtp;   /* RUGRATS_FRAMEPROF: projections this present (host_win32.c) */
 static void rtp(int i, int last) {
+    fp_rtp++;
     int64_t x = mac_chk(1, mac_chk(1, mac_chk(1, (int64_t)TR[0] * 0x1000 + RT[0][0] * V[i].x) + RT[0][1] * V[i].y) + RT[0][2] * V[i].z);
     int64_t y = mac_chk(2, mac_chk(2, mac_chk(2, (int64_t)TR[1] * 0x1000 + RT[1][0] * V[i].x) + RT[1][1] * V[i].y) + RT[1][2] * V[i].z);
     int64_t z = mac_chk(3, mac_chk(3, mac_chk(3, (int64_t)TR[2] * 0x1000 + RT[2][0] * V[i].x) + RT[2][1] * V[i].y) + RT[2][2] * V[i].z);

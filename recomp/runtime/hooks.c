@@ -166,7 +166,9 @@ static void pkt_frame_start(void) {
     pkt_start = mem_r32(0x800DE3B0u);
 }
 uint32_t hooks_pkt_ring_bytes(void) { return pkt_ring_kb() * 1024u; }   /* saved as cpu.ram_ext (hw.c) */
+unsigned fp_pace;   /* RUGRATS_FRAMEPROF: game frames (pacing calls) this present (host_win32.c) */
 int rt_hook_8001ceb4(void) {
+    fp_pace++;
     {   /* old-build state loaded: the resume call takes 2 -> 1 (that frame's stale list sends are skipped, hw.c),
            the next frame 1 -> 0 */
         extern int dma2_stale;

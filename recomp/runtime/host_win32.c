@@ -2547,6 +2547,18 @@ void host_present(void) {
                                        (a.QuadPart - t_last.QuadPart) * k, (b.QuadPart - a.QuadPart) * k, (c.QuadPart - b.QuadPart) * k);
             }
         }
+        {   /* RUGRATS_FRAMEPROF=<from>,<to> (debug): per present in that frame range, game ms, game frames (pacing calls),
+               GTE projections, polygons, list sends and their ms */
+            extern unsigned fp_rtp, fp_poly, fp_pace, fp_dma_n; extern double fp_dma_ms;
+            static int f0 = -2, f1;
+            if (f0 == -2) { const char *e = getenv("RUGRATS_FRAMEPROF"); f0 = -1; if (e) sscanf(e, "%d,%d", &f0, &f1); }
+            if (f0 >= 0 && (int)frame_no >= f0 && (int)frame_no <= f1 && t_last.QuadPart) {
+                const double k = 1000.0 / (double)qpf.QuadPart;
+                rt_logf("fp %u: game %.2f show %.2f | pace %u rtp %u poly %u sends %u (%.2f ms)\n", frame_no,
+                        (a.QuadPart - t_last.QuadPart) * k, (c.QuadPart - b.QuadPart) * k, fp_pace, fp_rtp, fp_poly, fp_dma_n, fp_dma_ms);
+            }
+            fp_rtp = fp_poly = fp_pace = fp_dma_n = 0; fp_dma_ms = 0;
+        }
         t_last = c;
         t_conv += (uint64_t)(b.QuadPart - a.QuadPart);
         t_show += (uint64_t)(c.QuadPart - b.QuadPart);

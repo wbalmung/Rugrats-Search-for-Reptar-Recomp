@@ -251,6 +251,10 @@ static int layerlog_on(void) {
 }
 /* > 0: list sends are stale (state from an older build loaded, hw_state); counted down by the pacing hook */
 int dma2_stale;
+__declspec(dllimport) int __stdcall QueryPerformanceCounter(long long *);   /* RUGRATS_DMATIME (no windows.h here) */
+__declspec(dllimport) int __stdcall QueryPerformanceFrequency(long long *);
+static long long dma_t_start;
+unsigned fp_dma_n; double fp_dma_ms;   /* RUGRATS_FRAMEPROF: list sends and their ms this present */
 uint32_t hooks_pkt_ring_bytes(void);
 static void dma_run(int ch) {
     uint32_t chcr = dma_chcr[ch];
@@ -265,6 +269,20 @@ static void dma_run(int ch) {
     } else if (mode == 2 && ch == 2) {
         /* linked list to GPU */
         int guard = 0;
+        QueryPerformanceCounter(&dma_t_start);
+        {   /* RUGRATS_SENDSTACK=<from>,<to> (debug): per list send in that present range, the likely guest return
+               addresses on the stack */
+            static int s0 = -2, s1; extern int frame_no;
+            if (s0 == -2) { const char *e = getenv("RUGRATS_SENDSTACK"); s0 = -1; if (e) sscanf(e, "%d,%d", &s0, &s1); }
+            if (s0 >= 0 && (int)frame_no >= s0 && (int)frame_no <= s1) {
+                char b[400]; int n = 0;
+                for (uint32_t a = cpu.r[29]; a < cpu.r[29] + 0x200 && n < 380; a += 4) {
+                    uint32_t v = mem_r32(a);
+                    if (v >= 0x80010000u && v < 0x800B6000u && (v & 3) == 0) n += snprintf(b + n, sizeof b - n, " %08x", v);
+                }
+                rt_logf("send f%u ot %06x:%s\n", frame_no, addr, b);
+            }
+        }
         { extern int gpu_cmdlog; if (gpu_cmdlog) rt_logf("dma2 list from %06x (ra %08x)\n", addr, cpu.r[31]); }
         {   /* debug: RUGRATS_PKTLOG also logs each list send with the packet ring's next-free pointer (hooks.c) */
             static int lg = -1;
@@ -292,6 +310,17 @@ static void dma_run(int ch) {
         }
         gpu_glass_flush();   /* see-through object faces held back for the hi-res picture (gpu.c glass_q) */
         dma_madr[ch] = 0xFFFFFF;
+        {   /* RUGRATS_DMATIME=1 (debug): ms spent sending lists (packet parse + polygon setup), every 240 sends */
+            static int on = -1, nsend; static long long f; static double acc, mx;
+            if (on < 0) { on = getenv("RUGRATS_DMATIME") != NULL; QueryPerformanceFrequency(&f); }
+            long long t; QueryPerformanceCounter(&t);
+            const double ms = (double)(t - dma_t_start) * 1000.0 / (double)f;
+            fp_dma_n++; fp_dma_ms += ms;   /* RUGRATS_FRAMEPROF (host_win32.c) */
+            if (on) {
+                acc += ms; if (ms > mx) mx = ms;
+                if (++nsend == 240) { rt_logf("dmatime: %.2f ms per send avg, max %.2f\n", acc / 240, mx); nsend = 0; acc = mx = 0; }
+            }
+        }
     } else {
         uint32_t words;
         if (mode == 0) words = dma_bcr[ch] & 0xFFFF ? dma_bcr[ch] & 0xFFFF : 0x10000;
