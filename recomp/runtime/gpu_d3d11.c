@@ -912,10 +912,108 @@ static void set_pass(int pass) {
 
 uint64_t hw_prof_flushes, hw_prof_verts, hw_prof_rows, hw_prof_runs, hw_prof_dm[8];
 
+/* Occlusion boxes (2026-11-16, hooks.c low-wall rule): a room's box, as triangles with the room depth scale in z,
+   drawn depth-only (no pixel shader, no depth write) inside an occlusion query right after the batch's room depth
+   pass. The box is "visible" when any sample is not behind the stored room depth (the pass stores the gap-shifted
+   depth, i.e. a little farther: errs to visible). Results come back a frame or more later (oc_read at present).
+   hw_occl_hidden(id) = the newest result is recent and says hidden, and no visible result within `hold` presents.
+   No result / old result / no depth pass = not hidden. RUGRATS_OCCLSYNC=1 waits for each result (tests: same
+   one-frame delay in every run). */
+#define OC_IDS 4096   /* hash slots (power of 2) */
+#define OC_Q 512
+#define OC_BOX 256
+#define OC_V (OC_BOX * 72)
+static struct { ID3D11Query *q; uint32_t id; int fly; uint32_t tick; } ocq[OC_Q];
+static struct { uint32_t id; int first, n, x0, y0, x1, y1; } ocb[OC_BOX];
+static HwVert ocv[OC_V];
+static int oc_nb, oc_nv, oc_sync = -1;
+static uint32_t oc_tick;
+static struct { uint32_t key, res, vis; uint8_t have, hid, seen; } oci[OC_IDS];   /* by key (0 = free), linear probing */
+static int oc_slot(uint32_t key, int make) {
+    uint32_t h = (key * 2654435761u) >> 20;
+    int old = -1;
+    for (int i = 0; i < 16; i++) {
+        const int k = (int)((h + (uint32_t)i) & (OC_IDS - 1));
+        if (oci[k].key == key) return k;
+        if (!oci[k].key || oc_tick - oci[k].res > 600) { if (old < 0) old = k; if (!oci[k].key) break; }
+    }
+    if (!make || old < 0) return -1;
+    memset(&oci[old], 0, sizeof oci[old]); oci[old].key = key;
+    return old;
+}
+void hw_occl_reset(void) { memset(oci, 0, sizeof oci); for (int k = 0; k < OC_Q; k++) ocq[k].id = 0; }
+uint64_t hw_prof_occl, hw_prof_occl_hid, hw_prof_dmv[8];
+void hw_occl_add(uint32_t id, const HwVert *v, int n, int cx0, int cy0, int cx1, int cy1) {
+    if (!S || !id || n <= 0 || n > 72 || oc_nb >= OC_BOX || oc_nv + n > OC_V) return;
+    memcpy(ocv + oc_nv, v, (size_t)n * sizeof *v);
+    ocb[oc_nb].id = id; ocb[oc_nb].first = oc_nv; ocb[oc_nb].n = n;
+    ocb[oc_nb].x0 = cx0; ocb[oc_nb].y0 = cy0; ocb[oc_nb].x1 = cx1; ocb[oc_nb].y1 = cy1;
+    oc_nb++; oc_nv += n;
+}
+int hw_occl_hidden(uint32_t key, int hold) {
+    const int id = S && key ? oc_slot(key, 0) : -1;
+    if (id < 0 || !oci[id].have || !oci[id].hid) return 0;
+    if (oc_tick - oci[id].res > 6) return 0;
+    return !oci[id].seen || oc_tick - oci[id].vis > (uint32_t)hold;
+}
+/* a result not older than `age` presents says visible: the caller may skip re-testing for a few frames (a box that
+   passes the depth test is the costly kind to draw; a hidden one is rejected early) */
+int hw_occl_seen(uint32_t key, int age) {
+    const int id = S && key ? oc_slot(key, 0) : -1;
+    return id >= 0 && oci[id].have && !oci[id].hid && oc_tick - oci[id].res <= (uint32_t)age;
+}
+static void oc_read(void) {
+    if (oc_sync < 0) { const char *e = getenv("RUGRATS_OCCLSYNC"); oc_sync = e ? atoi(e) != 0 : 0; }
+    for (int k = 0; k < OC_Q; k++) {
+        if (!ocq[k].fly) continue;
+        UINT64 n = 0;
+        HRESULT hr;
+        int spin = 0;
+        while ((hr = ID3D11DeviceContext_GetData(ctx, (ID3D11Asynchronous *)ocq[k].q, &n, sizeof n, oc_sync ? 0 : D3D11_ASYNC_GETDATA_DONOTFLUSH)) == S_FALSE &&
+               oc_sync && spin++ < 2000000) YieldProcessor();
+        if (hr == S_FALSE) { if (oc_tick - ocq[k].tick > 30) ocq[k].fly = 0; continue; }
+        ocq[k].fly = 0;
+        if (hr != S_OK) continue;
+        const int id = ocq[k].id ? oc_slot(ocq[k].id, 1) : -1;
+        if (id < 0) continue;
+        if (oci[id].have && (int32_t)(ocq[k].tick - oci[id].res) < 0) continue;   /* older than what we have */
+        oci[id].have = 1; oci[id].res = ocq[k].tick; oci[id].hid = n == 0;
+        if (n) { oci[id].seen = 1; oci[id].vis = ocq[k].tick; }
+        hw_prof_occl++; hw_prof_occl_hid += n == 0;
+    }
+    oc_tick++;
+}
+/* in hw_flush, after the room depth pass; vertices are at `base` in the vertex buffer */
+static void oc_draw(int base) {
+    ID3D11DeviceContext_OMSetRenderTargets(ctx, 0, NULL, dsv);
+    ID3D11DeviceContext_PSSetShader(ctx, NULL, NULL, 0);
+    ID3D11DeviceContext_OMSetDepthStencilState(ctx, ds_test, 0);
+    ID3D11DeviceContext_RSSetState(ctx, rs);
+    for (int b = 0; b < oc_nb; b++) {
+        D3D11_RECT sc = { ocb[b].x0 * S, ocb[b].y0 * S, (ocb[b].x1 + 1) * S, (ocb[b].y1 + 1) * S };
+        if (sc.right <= sc.left || sc.bottom <= sc.top) continue;
+        int k = -1;
+        for (int i = 0; i < OC_Q && k < 0; i++) if (!ocq[i].fly) k = i;
+        if (k < 0) break;
+        if (!ocq[k].q) {
+            D3D11_QUERY_DESC qd = { D3D11_QUERY_OCCLUSION, 0 };
+            if (FAILED(ID3D11Device_CreateQuery(dev, &qd, &ocq[k].q))) { ocq[k].q = NULL; break; }
+        }
+        ID3D11DeviceContext_RSSetScissorRects(ctx, 1, &sc);
+        ID3D11DeviceContext_Begin(ctx, (ID3D11Asynchronous *)ocq[k].q);
+        ID3D11DeviceContext_Draw(ctx, (UINT)ocb[b].n, (UINT)(base + ocb[b].first));
+        ID3D11DeviceContext_End(ctx, (ID3D11Asynchronous *)ocq[k].q);
+        ocq[k].id = ocb[b].id; ocq[k].tick = oc_tick; ocq[k].fly = 1;
+    }
+    ID3D11DeviceContext_OMSetRenderTargets(ctx, 1, &rtv, dsv);
+    ID3D11DeviceContext_PSSetShader(ctx, ps, NULL, 0);
+    ID3D11DeviceContext_OMSetDepthStencilState(ctx, ds_off, 0);
+}
+
 static void gt_begin(void), gt_end(void);
 void hw_flush(void) {
     rd_x0 = 1 << 30; rd_x1 = -1;
-    if (!S || !nverts) return;
+    if (!S || !nverts) { oc_nb = oc_nv = 0; return; }
     gt_begin();
     if (dirty_y0 <= dirty_y1) {
         D3D11_BOX box = { 0, (UINT)dirty_y0, 0, 1024, (UINT)dirty_y1 + 1, 1 };
@@ -938,6 +1036,8 @@ void hw_flush(void) {
             memcpy(dst + runs[r].first + cur[r], verts + segs[s].first, (size_t)segs[s].n * sizeof(HwVert));
             cur[r] += segs[s].n;
         }
+        if (oc_nv && nverts + oc_nv <= VB_MAX) memcpy(dst + nverts, ocv, (size_t)oc_nv * sizeof(HwVert));
+        else oc_nb = oc_nv = 0;
     }
     ID3D11DeviceContext_Unmap(ctx, (ID3D11Resource *)vb, 0);
     hw_prof_flushes++;
@@ -995,8 +1095,10 @@ void hw_flush(void) {
             }
             ID3D11DeviceContext_RSSetState(ctx, rs);
             ID3D11DeviceContext_OMSetDepthStencilState(ctx, ds_off, 0);
+            if (ez && oc_nb) oc_draw(nverts);
         }
     }
+    oc_nb = oc_nv = 0;   /* boxes without a room depth pass in this batch get no result (= not hidden) */
     int pass = -1, dmode = HW_DM_NONE;
     /* object sort fix (oz, see ps_to): objects test it, TW stores into it, room pieces and fills clear it */
     const int ozon = ortv && osrv && ps_to && ps_ow && ps_oc && ps_och && bs_max;
@@ -1069,7 +1171,7 @@ void hw_flush(void) {
                 rt_logf("run %d dm %d sub %d n %d clip %d,%d-%d,%d\n", i, runs[i].dm, runs[i].sub, runs[i].n, runs[i].x0, runs[i].y0, runs[i].x1, runs[i].y1);
     }
     hw_prof_runs += (uint64_t)nruns;
-    for (int i = 0; i < nruns; i++) hw_prof_dm[runs[i].dm & 7]++;
+    for (int i = 0; i < nruns; i++) { hw_prof_dm[runs[i].dm & 7]++; hw_prof_dmv[runs[i].dm & 7] += (uint64_t)runs[i].n; }
     nverts = nruns = nsegs = 0;
     gt_end();
 }
@@ -1258,6 +1360,7 @@ static void gt_frame_end(void) {
 void hw_present(int sx, int sy, int w, int h, int dx, int dy, int dw, int dh, int smooth, int sync, int tear) {
     if (!S) return;
     gt_frame_start();
+    oc_read();
     hw_flush();
     if (NS > 1) {   /* resolve only the shown region (wraps at the VRAM edge: clamp, like the view) */
         int rx = sx * S - 2, ry = sy * S - 2, rw = w * S + 4, rh = h * S + 4;   /* + 2 px: filters read the border */
@@ -1293,6 +1396,11 @@ void hw_present(int sx, int sy, int w, int h, int dx, int dy, int dw, int dh, in
             rt_logf("hwgpu: runs per present %.0f (none %.0f write %.0f test %.0f clear %.0f wnt %.0f hud %.0f htest %.0f tw %.0f)\n",
                     hw_prof_runs / 1000.0, hw_prof_dm[0] / 1000.0, hw_prof_dm[1] / 1000.0, hw_prof_dm[2] / 1000.0, hw_prof_dm[3] / 1000.0,
                     hw_prof_dm[4] / 1000.0, hw_prof_dm[5] / 1000.0, hw_prof_dm[6] / 1000.0, hw_prof_dm[7] / 1000.0);
+            rt_logf("hwgpu: occlusion boxes per present %.1f, hidden %.1f\n", hw_prof_occl / 1000.0, hw_prof_occl_hid / 1000.0);
+            hw_prof_occl = hw_prof_occl_hid = 0;
+            rt_logf("hwgpu: vertices per present: none %.0f write %.0f test %.0f clear %.0f wnt %.0f hud %.0f htest %.0f tw %.0f\n", hw_prof_dmv[0] / 1000.0, hw_prof_dmv[1] / 1000.0,
+                    hw_prof_dmv[2] / 1000.0, hw_prof_dmv[3] / 1000.0, hw_prof_dmv[4] / 1000.0, hw_prof_dmv[5] / 1000.0, hw_prof_dmv[6] / 1000.0, hw_prof_dmv[7] / 1000.0);
+            memset(hw_prof_dmv, 0, sizeof hw_prof_dmv);
             hw_prof_flushes = hw_prof_verts = spins = hw_prof_runs = 0;
             memset(hw_prof_dm, 0, sizeof hw_prof_dm);
         }

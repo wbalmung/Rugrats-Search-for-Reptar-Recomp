@@ -445,6 +445,116 @@ static int ow_room_rect(uint32_t cur, int nb, uint32_t rect, int16_t *box) {
    on screen? Third user save (2026-11-14): the far side seen over the hedge hangs off room 51 (52-55 and on, the maze
    winds), and 51's own box left the screen as the camera turned left, so the whole chain derendered. Breadth-first
    from nb, at most LW_SEEN_MAX rooms looked at. */
+/* Occlusion test for the rooms the low-wall rule adds (2026-11-16, user's save by the fence in Grandpa's Teeth:
+   looking up, the rule passed 12 rooms whose boxes are on screen but lie behind the near hedge / fence: twice the
+   vertices, CPU frame 2.0 -> 3.5 ms). Each candidate room's box goes to the GPU as an occlusion query against the
+   frame's room depth (gpu_occl_box -> gpu_d3d11.c hw_occl_add); the answer comes back a frame or more later. A room
+   counts as hidden only while the newest answer is recent and says so and it has not been visible for OCCL_HOLD
+   presents; no answer = visible. The box is projected here with the GTE's current matrix (the room being
+   traversed: corners are relative to its origin, as in ow_room_rect), clipped at z = 64; with the eye inside the
+   box (+-256) nothing is sent, so the room stays visible. RUGRATS_OCCL=0 = off, RUGRATS_OCCLLOG=1. */
+enum { OCCL_HOLD = 30, OCCL_IDS = 256 };
+#define OCCL_PAD_PX 3.0
+void gte_cam(double r[9], double t[3]);
+void gte_proj_params(double *ox, double *oy, double *h, double *w);
+void gpu_occl_box(uint32_t id, const float (*v)[3], int n);
+int hw_occl_hidden(uint32_t id, int hold);
+void hw_occl_reset(void);
+static int occl_on(void) {
+    static int on = -1;
+    if (on < 0) { const char *e = getenv("RUGRATS_OCCL"); on = e ? atoi(e) != 0 : 1; }
+    return on && gpu_hw_on();
+}
+static int occl_send(uint32_t key, const double *lo, const double *hi);
+static void occl_box(uint32_t cur, int nb) {
+    static uint32_t sent[OCCL_IDS];
+    if (!occl_on() || nb < 0 || nb >= OCCL_IDS || sent[nb] == present_count + 1) return;
+    sent[nb] = present_count + 1;
+    const uint32_t nr = mem_r32(0x800C4A8Cu) + (uint32_t)nb * 0x70;
+    double lo[3], hi[3];
+    for (int a = 0; a < 3; a++) {
+        const int32_t o = (int32_t)mem_r32(cur + 4 * a);
+        lo[a] = (double)((int32_t)mem_r32(nr + 16 + 4 * a) - o); hi[a] = (double)((int32_t)mem_r32(nr + 32 + 4 * a) - o);
+        if (hi[a] < lo[a]) return;
+    }
+    occl_send(0x100u + (uint32_t)nb, lo, hi);
+}
+/* box lo..hi in the coordinates of the GTE's current matrix -> occlusion query `key`; 0 = nothing sent (eye inside) */
+static int occl_send(uint32_t key, const double *lo, const double *hi) {
+    double R[9], T[3], ox, oy, hh, ww;
+    gte_cam(R, T);
+    gte_proj_params(&ox, &oy, &hh, &ww);
+    /* The box is padded by OCCL_PAD_PX screen pixels' worth of units at its far end (second pass): the game's own
+       projection (GTE divide approximation, whole pixels) can sit 1-2 px off this exact one, and a thin far strip
+       seen edge-on then fell outside its box (floor line under the golf net, look-up regression 2026-11-16). */
+    double c[8][3], pad = 0;
+    for (int pass = 0; pass < 2; pass++) {
+        double zmax = 0;
+        for (int k = 0; k < 8; k++) {
+            const double v[3] = { k & 1 ? hi[0] + pad : lo[0] - pad, k & 2 ? hi[1] + pad : lo[1] - pad, k & 4 ? hi[2] + pad : lo[2] - pad };
+            for (int i = 0; i < 3; i++) c[k][i] = (R[i * 3] * v[0] + R[i * 3 + 1] * v[1] + R[i * 3 + 2] * v[2]) / 4096.0 + T[i];
+            if (c[k][2] > zmax) zmax = c[k][2];
+        }
+        pad = OCCL_PAD_PX * zmax / (hh * ww > 1 ? hh * ww : 1);
+        if (pad > 1024) pad = 1024;
+    }
+    /* faces: z lo, z hi, y lo, y hi, x lo, x hi; only the (at most 3) faces turned to the eye are drawn: they cover
+       the same pixels as the whole box at its nearest depth, with half the fill */
+    static const uint8_t face[6][4] = { { 0, 1, 3, 2 }, { 4, 5, 7, 6 }, { 0, 1, 5, 4 }, { 2, 3, 7, 6 }, { 0, 2, 6, 4 }, { 1, 3, 7, 5 } };
+    /* eye distance in front of each face, in camera space (eye = origin): normal = cross product of two face edges,
+       turned away from the box centre (works whatever scaling the game's matrix carries). No face more than 256 in
+       front = eye inside the box (+-256): no query. */
+    double fd[6], far = -1e30, ctr[3];
+    for (int i = 0; i < 3; i++) ctr[i] = (c[0][i] + c[7][i]) * 0.5;
+    for (int f = 0; f < 6; f++) {
+        const double *p0 = c[face[f][0]], *p1 = c[face[f][1]], *p3 = c[face[f][3]];
+        const double u[3] = { p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2] }, w[3] = { p3[0] - p0[0], p3[1] - p0[1], p3[2] - p0[2] };
+        double nx = u[1] * w[2] - u[2] * w[1], ny = u[2] * w[0] - u[0] * w[2], nz = u[0] * w[1] - u[1] * w[0];
+        const double len = sqrt(nx * nx + ny * ny + nz * nz);
+        if (len <= 0) { fd[f] = 0; continue; }   /* flat box: this face has no area */
+        if (nx * (p0[0] - ctr[0]) + ny * (p0[1] - ctr[1]) + nz * (p0[2] - ctr[2]) < 0) { nx = -nx; ny = -ny; nz = -nz; }
+        fd[f] = -(nx * p0[0] + ny * p0[1] + nz * p0[2]) / len;
+        if (fd[f] > far) far = fd[f];
+    }
+    if (far <= 256) return 0;
+    float out[72][3];
+    int n = 0;
+    const double zn = 64.0;
+    for (int f = 0; f < 6; f++) {
+        if (fd[f] <= 0) continue;
+        double p[8][3];
+        int np = 0;
+        for (int k = 0; k < 4; k++) {   /* clip the quad at z >= zn */
+            const double *a = c[face[f][k]], *b = c[face[f][(k + 1) & 3]];
+            if (a[2] >= zn) { memcpy(p[np++], a, sizeof p[0]); }
+            if ((a[2] >= zn) != (b[2] >= zn)) {
+                const double t = (zn - a[2]) / (b[2] - a[2]);
+                p[np][0] = a[0] + (b[0] - a[0]) * t; p[np][1] = a[1] + (b[1] - a[1]) * t; p[np][2] = zn; np++;
+            }
+        }
+        if (np < 3) continue;
+        float q[8][3];
+        for (int k = 0; k < np; k++) {
+            double x = hh * ww * p[k][0] / p[k][2] + ox, y = hh * p[k][1] / p[k][2] + oy;
+            if (x < -30000) x = -30000; if (x > 30000) x = 30000;
+            if (y < -30000) y = -30000; if (y > 30000) y = 30000;
+            q[k][0] = (float)x; q[k][1] = (float)y; q[k][2] = (float)(4096.0 / p[k][2]);
+        }
+        for (int k = 1; k + 1 < np && n + 3 <= 72; k++) {
+            memcpy(out[n++], q[0], sizeof q[0]); memcpy(out[n++], q[k], sizeof q[0]); memcpy(out[n++], q[k + 1], sizeof q[0]);
+        }
+    }
+    if (n) gpu_occl_box(key, out, n);
+    return n != 0;
+}
+static int occl_hidden(int nb) {
+    static int lg = -1;
+    if (!occl_on() || nb < 0 || nb >= OCCL_IDS) return 0;
+    const int h = hw_occl_hidden(0x100u + (uint32_t)nb, OCCL_HOLD);
+    if (lg < 0) lg = getenv("RUGRATS_OCCLLOG") != NULL;
+    if (lg && h) rt_logf("f%u room %d hidden (occlusion)\n", present_count, nb);
+    return h;
+}
 enum { LW_SEEN_MAX = 48 };
 static int lw_room_seen(uint32_t cur, int nb, int from, uint32_t rect, int ahead) {
     const uint32_t tbl = mem_r32(0x800C4A8Cu);
@@ -455,7 +565,10 @@ static int lw_room_seen(uint32_t cur, int nb, int from, uint32_t rect, int ahead
     q[nq] = nb; d[nq++] = 0;
     for (int h = 1; h < nq; h++) {
         const int rm = q[h];
-        if (ow_room_on_screen(cur, rm, rect)) return 1;
+        if (ow_room_on_screen(cur, rm, rect)) {   /* on screen and not known to be hidden behind nearer walls */
+            occl_box(cur, rm);
+            if (!occl_hidden(rm)) return 1;
+        }
         if (d[h] >= ahead) continue;
         const uint32_t nr = tbl + (uint32_t)rm * 0x70;
         const int np = (int)(mem_r32(nr + 48) & 0xff);
@@ -623,7 +736,20 @@ int rt_hook_80033278(void) {
         static int box_cap = -1;
         if (box_cap < 0) { const char *e = getenv("RUGRATS_LOWWALLBOX"); box_cap = e ? atoi(e) : 40; }
         if (lowwall < 0) { const char *e = getenv("RUGRATS_LOWWALL"); lowwall = e ? atoi(e) != 0 : 1; }
-        if (lw_frame != present_count) { lw_frame = present_count; lw_pass = 0; }
+        if (lw_frame != present_count) {
+            lw_frame = present_count; lw_pass = 0;
+            /* occlusion answers describe the previous frames' view: after a camera cut (eye more than 600 units
+               away from last frame's) they are dropped, so nothing is skipped until new answers arrive */
+            static int32_t oe[3];
+            const uint32_t cam = mem_r32(cpu.r[29] + 124);
+            int jump = 0;
+            for (int a = 0; a < 3; a++) {
+                const int32_t e = (int32_t)mem_r32(cam + 20 + 4 * a);
+                if (e - oe[a] > 600 || oe[a] - e > 600) jump = 1;
+                oe[a] = e;
+            }
+            if (jump) hw_occl_reset();
+        }
         /* Box mode (levels outside the gap table, i.e. Reptar 2010): the doorway's rect is widened only to where the
            room's box covers the screen (ow_room_rect), not to the parent rect. With the parent rect the park of
            Reptar 2010 went from 18 to 36 rooms a frame (the widened rects let the game pass more rooms on its own)
@@ -675,11 +801,21 @@ int rt_hook_80033278(void) {
             hooks_gap_level()) {
             /* a failing doorway (off screen, e.g. behind the camera's side) still passes when its room's box is on
                screen: that room shows over the hedge (user's second save: room 49 left of the camera room) */
-            if (!cpu.r[2] && lw_room_seen(mem_r32(0x800C4A8Cu) + cpu.r[18] * 0x70, (int16_t)mem_r16(portal + 14), (int)cpu.r[18], r, LOWWALL_AHEAD)) {
-                if (lg) rt_logf("f%u portal %08x: low walls, room on screen, forced pass\n", present_count, portal);
-                cpu.r[2] = 1;
+            const uint32_t cur = mem_r32(0x800C4A8Cu) + cpu.r[18] * 0x70;
+            const int nb = (int16_t)mem_r16(portal + 14);
+            int widen = 1;
+            if (!cpu.r[2]) {
+                if (lw_room_seen(cur, nb, (int)cpu.r[18], r, LOWWALL_AHEAD)) {
+                    if (lg) rt_logf("f%u portal %08x: low walls, room on screen, forced pass\n", present_count, portal);
+                    cpu.r[2] = 1;
+                }
+            } else {
+                /* the game's own pass: the doorway's rect is widened unless the room is hidden (occlusion test) and
+                   so is everything on screen past it; then it keeps the game's own rect, as on the PS1 */
+                occl_box(cur, nb);
+                if (occl_hidden(nb) && !lw_room_seen(cur, nb, (int)cpu.r[18], r, LOWWALL_AHEAD)) widen = 0;
             }
-            if (cpu.r[2]) {
+            if (cpu.r[2] && widen) {
                 if (lg) rt_logf("f%u portal %08x: low walls, parent rect kept\n", present_count, portal);
                 mem_w16(out, s0); mem_w16(out + 2, s1); mem_w16(out + 4, s2); mem_w16(out + 6, s3);
             }
@@ -734,6 +870,7 @@ static int32_t div_trunc(int32_t a, int32_t b) {
     if (a == INT32_MIN && b == -1) return INT32_MIN;
     return a / b;
 }
+static uint32_t occl_still_obj;   /* object being drawn when it is a still prop, else 0 (dcls_run) */
 int rt_hook_80031834(void) {
     int32_t z = (int32_t)gte_read(39), x = (int32_t)gte_read(37), y = (int32_t)gte_read(38);
     int32_t h = (int32_t)gte_read(58);
@@ -777,6 +914,39 @@ int rt_hook_80031834(void) {
     if (sx < rx0 - rx || rx0 + rw + rx < sx) return 1;
     if (sy < ry0 - ry || ry0 + rh + ry < sy) return 1;
     cpu.r[2] = 1;
+    /* Occlusion (2026-11-16, see occl_box): world objects of the object draw (ra 80031c9c, s0 = object) in the gap
+       levels get an occlusion query too: a screen square around the sphere at its nearest depth (z - r). Hidden
+       behind room walls = culled like the sphere test does. Only props that have not moved (prop_still, set by the
+       object draw wrapper in occl_still_obj): characters and moving things draw more than what is inside their
+       sphere (a small patch at the foot of the golf net went missing in the look-up regression, save bk_golf-aim).
+       RUGRATS_OCCLOBJ=0 = off. */
+    {
+        static int on = -1;
+        if (on < 0) { const char *e = getenv("RUGRATS_OCCLOBJ"); on = e ? atoi(e) != 0 : 1; }
+        const uint32_t obj = cpu.r[16];
+        if (on && cpu.r[31] == 0x80031c9cu && (obj >> 24) == 0x80u && obj == occl_still_obj && z - r >= 64 && r > 0 &&
+            occl_on() && hooks_gap_level()) {
+            int hw_occl_seen(uint32_t id, int age);
+            if (!(hw_occl_seen(obj, 12) && ((present_count + (obj >> 3)) & 7))) {
+                double ox, oy, hh, ww;
+                gte_proj_params(&ox, &oy, &hh, &ww);
+                /* screen bound of the sphere: the cube around it, each side projected at the cube's near and far
+                   depth, whichever reaches further out */
+                const double zf = (double)z - r, zb = (double)z + r, kx = hh * ww, ky = hh;
+                const double xl = (double)x - r, xr = (double)x + r, yt = (double)y - r, yb = (double)y + r;
+                double x0 = kx * (xl / zf < xl / zb ? xl / zf : xl / zb) + ox, x1 = kx * (xr / zf > xr / zb ? xr / zf : xr / zb) + ox;
+                double y0 = ky * (yt / zf < yt / zb ? yt / zf : yt / zb) + oy, y1 = ky * (yb / zf > yb / zb ? yb / zf : yb / zb) + oy;
+                x0 -= OCCL_PAD_PX; x1 += OCCL_PAD_PX; y0 -= OCCL_PAD_PX; y1 += OCCL_PAD_PX;
+                if (x0 < -30000) x0 = -30000; if (x1 > 30000) x1 = 30000;
+                if (y0 < -30000) y0 = -30000; if (y1 > 30000) y1 = 30000;
+                const float iz = (float)(4096.0 / zf);
+                const float q[6][3] = { { (float)x0, (float)y0, iz }, { (float)x1, (float)y0, iz }, { (float)x0, (float)y1, iz },
+                                        { (float)x1, (float)y0, iz }, { (float)x1, (float)y1, iz }, { (float)x0, (float)y1, iz } };
+                gpu_occl_box(obj, q, 6);
+                if (hw_occl_hidden(obj, OCCL_HOLD)) cpu.r[2] = 0;
+            }
+        }
+    }
     return 1;
 }
 
@@ -868,6 +1038,7 @@ int rt_hook_80075698(void) {
 #include "savestate.h"
 void hooks_state(StateIO *s) {
     st_prefix(s, "hooks");
+    if (st_loading(s)) hw_occl_reset();
     ST(s, step_last_cycles); ST(s, step_init); ST(s, acc_ticks); ST(s, acc_secs); ST(s, frame_counter);
     ST(s, blink_acc); ST(s, blink_fc); ST(s, blink_step);
     ST(s, hooks_level); ST(s, hooks_level_vbl); ST(s, level_exit_at);
@@ -2196,7 +2367,10 @@ static int dcls_run(void (*fn)(void), int *inside, int cls) {
     if (cls == DCLS_OBJ) {
         const int m = hooks_actor_front();
         const int actor = m == 2 ? cpu.r[31] == ACTOR_LIST_RA : cpu.r[4] == RCAM_PLAYER;
-        gte_oid_bits = !m ? 0 : actor ? OID_ACTOR : cpu.r[31] == ACTOR_LIST_RA ? 0 : (m == 2 || prop_still(cpu.r[4])) ? OID_STATIC : 0;
+        /* prop that has not moved (prop list, not the player): also the only kind the occlusion test may skip */
+        const int still = cpu.r[31] != ACTOR_LIST_RA && cpu.r[4] != RCAM_PLAYER ? prop_still(cpu.r[4]) : 0;
+        occl_still_obj = still ? cpu.r[4] : 0;
+        gte_oid_bits = !m ? 0 : actor ? OID_ACTOR : cpu.r[31] == ACTOR_LIST_RA ? 0 : (m == 2 || still) ? OID_STATIC : 0;
         /* Tree backs (2026-11-14, user, hedge maze): props (the prop list, not characters) get their back faces drawn
            in the gap-table levels, so flat tree cards seen from behind stay. RUGRATS_TREEBACK=0 = off. */
         static int tb = -1;
@@ -2206,6 +2380,7 @@ static int dcls_run(void (*fn)(void), int *inside, int cls) {
     }
     fn();                                   /* the original */
     *inside = 0; gte_dcls = prev; gte_oid_bits = prev_bits; gte_obj_backface = prev_bf;
+    if (cls == DCLS_OBJ) occl_still_obj = 0;
     return 1;
 }
 void f_80010e14(void);
@@ -2458,6 +2633,27 @@ int rt_hook_80032cf4(void) {
     if (lg < 0) lg = getenv("RUGRATS_CHUNKLOG") != NULL;
     const uint32_t box = cpu.r[4], rect = cpu.r[5], ra = cpu.r[31];
     in = 1; f_80032cf4(); in = 0;
+    /* Occlusion (2026-11-16, see occl_box): a chunk that passed goes to the GPU as an occlusion query of its box
+       (the GTE holds the room's matrix here); once the answers say it is behind nearer room walls it is skipped.
+       Levels of the gap table only (where the low-wall rule draws many rooms the PS1 never did).
+       RUGRATS_OCCLCHUNK=0 = off. */
+    {
+        static int on = -1;
+        if (on < 0) { const char *e = getenv("RUGRATS_OCCLCHUNK"); on = e ? atoi(e) != 0 : 1; }
+        if (on && cpu.r[2] && occl_on() && hooks_gap_level()) {
+            const double lo[3] = { (int16_t)mem_r16(box), (int16_t)mem_r16(box + 2), (int16_t)mem_r16(box + 4) };
+            const double hi[3] = { (int16_t)mem_r16(box + 8), (int16_t)mem_r16(box + 10), (int16_t)mem_r16(box + 12) };
+            /* a chunk known to be visible is tested again only every 8th present (staggered by address): its box
+               passes the depth test over its whole area, which costs GPU fill at high internal resolutions (40
+               boxes a frame: +0.4 ms at 9x); hidden and unknown ones are tested every frame */
+            int hw_occl_seen(uint32_t id, int age);
+            if (hw_occl_seen(box, 12) && ((present_count + (box >> 4)) & 7)) {
+            } else if (occl_send(box, lo, hi) && hw_occl_hidden(box, OCCL_HOLD)) {
+                cpu.r[2] = 0;
+                if (lg) rt_logf("f%u chunk %08x hidden (occlusion)\n", present_count, box);
+            }
+        }
+    }
     if (lg) {
         char b[400]; int n = 0;
         for (int i = 0; i < 8; i++)

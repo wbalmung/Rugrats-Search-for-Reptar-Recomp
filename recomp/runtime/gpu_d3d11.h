@@ -52,4 +52,10 @@ void hw_flush(void);
 const uint16_t *hw_readback(void); /* whole hi-res VRAM as 15-bit (slow; menu / test shots) */
 int hw_read_native(int x0, int y0, int x1, int y1, uint16_t *out); /* native rect of the target -> out (pitch 1024) */
 void hw_present(int sx, int sy, int w, int h, int dx, int dy, int dw, int dh, int smooth, int sync, int tear);
-double hw_gpu_ms(void);             /* recent GPU time of a frame's final batch + present draw (ms, averaged), 0 = unknown */
+/* occlusion boxes: triangles (x, y hi-res pixels, z room depth scale; other fields unused) tested against the room
+   depth of the batch they are added in; hw_occl_hidden = newest result recent and hidden, none visible for `hold` presents */
+void hw_occl_add(uint32_t id, const HwVert *v, int n, int cx0, int cy0, int cx1, int cy1);   /* id: any non-zero key */
+int hw_occl_hidden(uint32_t id, int hold);
+int hw_occl_seen(uint32_t id, int age);   /* newest result is visible and at most `age` presents old */
+void hw_occl_reset(void);         /* forget every result (state load) */
+double hw_gpu_ms(void);            /* recent GPU time of a frame's final batch + present draw (ms, averaged), 0 = unknown */

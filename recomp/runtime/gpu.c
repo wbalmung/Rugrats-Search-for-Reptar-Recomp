@@ -1715,6 +1715,32 @@ static void hw_tex_read(int tpx, int tpy, int depth, int clutx, int cluty) {
     if (depth < 2) hw_note_read(clutx, cluty, clutx + (depth == 0 ? 16 : 256) - 1, cluty);
 }
 
+/* Occlusion boxes (hooks.c low-wall rule, gpu_d3d11.c hw_occl_add): room boxes projected by the hook while the game
+   picks the frame's rooms, as triangles {GTE screen x, y, 4096 / z}. They wait here until the frame's first room
+   piece is drawn, which gives the drawing offset / area of the buffer this frame goes to. */
+enum { OCCL_MAX = 256 };
+static struct { uint32_t id; int n; float v[72][3]; } occl_q[OCCL_MAX];
+static int occl_n;
+void gpu_occl_box(uint32_t id, const float (*v)[3], int n) {
+    if (!hw_s || n <= 0 || n > 72 || occl_n >= OCCL_MAX) return;
+    occl_q[occl_n].id = id; occl_q[occl_n].n = n;
+    memcpy(occl_q[occl_n].v, v, (size_t)n * sizeof *v);
+    occl_n++;
+}
+static void occl_emit(const St *st) {
+    const float s = (float)hw_s;
+    for (int i = 0; i < occl_n; i++) {
+        HwVert o[72];
+        memset(o, 0, sizeof o);
+        for (int k = 0; k < occl_q[i].n; k++) {
+            float z = occl_q[i].v[k][2] * (1.0f / 64);
+            o[k].x = (g.offx + occl_q[i].v[k][0]) * s; o[k].y = (g.offy + occl_q[i].v[k][1]) * s;
+            o[k].z = z > 1.0f ? 1.0f : z;
+        }
+        hw_occl_add(occl_q[i].id, o, occl_q[i].n, st->dx1, st->dy1, st->dx2, st->dy2);
+    }
+    occl_n = 0;
+}
 static void hw_tri(const St *st, Vtx a, Vtx b, Vtx c, int textured, int gouraud, int semi_on, int raw, int clutx,
                    int cluty, int tpx, int tpy, int depth) {
     const Vtx *p[3] = { &a, &b, &c };
@@ -1754,6 +1780,7 @@ static void hw_tri(const St *st, Vtx a, Vtx b, Vtx c, int textured, int gouraud,
         v[k].zn = a.dm == DM_WNT && gpu_room_obj_wnt() == 2 ? p[k]->izn * (1.0f / 64) : 0;
         v[k].pw = textured && a.pw > 0 && b.pw > 0 && c.pw > 0 ? p[k]->pw : 0;   /* 0 = affine (shader uses 1) */        if (v[k].pw > 0) { v[k].u += p[k]->uf; v[k].v += p[k]->vf; }   /* split point: exact texture fraction */
     }
+    if (occl_n && a.dm == DM_WRITE) occl_emit(st);   /* with the frame's first room piece: same batch, same drawing area */
     hw_add(v, 3, semi_on && st->semi == 2, a.dm, st->dx1, st->dy1, st->dx2, st->dy2);
     if (textured) hw_tex_read(tpx, tpy, depth, clutx, cluty);
 }

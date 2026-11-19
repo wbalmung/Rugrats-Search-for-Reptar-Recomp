@@ -268,6 +268,10 @@ static int64_t ws_num = 3, ws_den = 4;
 void gte_proj_params(double *ox, double *oy, double *h, double *w) {   /* SX = h * w * X / Z + ox, SY = h * Y / Z + oy */
     *ox = OFX / 65536.0; *oy = OFY / 65536.0; *h = H ? H : 1; *w = opt.widescreen ? (double)ws_num / (double)ws_den : 1.0;
 }
+/* current rotation (rows, 1.0 = 4096) and translation: camera = r * v / 4096 + t (hooks.c occlusion boxes) */
+void gte_cam(double r[9], double t[3]) {
+    for (int i = 0; i < 3; i++) { for (int j = 0; j < 3; j++) r[i * 3 + j] = RT[i][j]; t[i] = TR[i]; }
+}
 int32_t gte_ws_x(int32_t x) { return opt.widescreen ? (int32_t)((int64_t)x * ws_num / ws_den) : x; }
 /* inverse of the squeeze (4/3), for models that must keep their 4:3 screen position (hooks.c 8003f934) */
 int64_t ws_hud_num(void) { return ws_den; }

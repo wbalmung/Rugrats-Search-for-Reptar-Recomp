@@ -516,6 +516,11 @@ logs every list packet with its layer and each frame's room point count.
   rect and rooms whose box, or the box of a room up to 6 doorways past them, is on screen pass, up to 12 rooms a frame, so rooms seen over a hedge are not cut to their
   doorway's outline). In the same levels back faces are drawn with the game's camera too: `RUGRATS_BACKFACEALL=0`
   = room back faces only with the stick camera over a wall (as before), `RUGRATS_TREEBACK=0` = no prop (tree) back faces.
+  Those extra rooms are mostly behind nearer walls, so in the same levels the D3D11 renderer asks the GPU which
+  room geometry chunks and objects are hidden (occlusion queries of their bounding boxes against the room depth,
+  answers a frame late; unknown = visible, 30 frames visible after the last visible answer) and skips the hidden
+  ones: `RUGRATS_OCCL=0` = off, `RUGRATS_OCCLCHUNK=0` / `RUGRATS_OCCLOBJ=0` = only that kind off,
+  `RUGRATS_OCCLSYNC=1` = wait for each answer (repeatable tests), `RUGRATS_OCCLLOG=1`.
   `RUGRATS_PORTALLOG=1` logs each test (with the frame number);
   `RUGRATS_WSX=<num>,<den>` changes the widescreen squeeze (debug: `1,2` makes leftover 4:3 culling obvious).
   `RUGRATS_WSIR=0` = hardware x clamp in widescreen (by default, points more than 32767 units to the side are
