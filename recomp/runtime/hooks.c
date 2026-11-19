@@ -2911,10 +2911,19 @@ static const struct { uint8_t db; uint8_t who; uint16_t id; } restore_speaker[] 
        swapped in only for a request of one of those 10 lines. (The Return of Mr. Friend, db 14, runs with the hub's
        voice bank: none of Mr. Friend's lines are loaded there, the game's own included.) */
     {9, RS_CHASE, 1135},
+    /* Incident on Aisle 7: its chatter 80080330 (timer gp+0xe40), while the pie gallery runs (level word 0x800C56A8
+       & 8), picks rand & 7 of the deli clerks' list 0x800B92DC [1067 1074 1075 1078 1081 1082 1085 1086], gap 2000
+       ticks (6.7 s); outside it Tommy's lines. 1073 1080 1083 1084 are the clerks' other clips (sorted by ear by the
+       user, 2026-11-18): only in place of one of those 8 (deli_line). Tommy's restored lines (103 215 220 221 224
+       230 231 233) never replace a clerk's line. Rule in restore_allowed (db 3). */
 };
 static int mrfriend_chase_line(unsigned id) { return id >= 1136 && id <= 1146 && id != 1143; }
+static int deli_line(unsigned id) {
+    return id == 1067 || id == 1074 || id == 1075 || id == 1078 || id == 1081 || id == 1082 || id == 1085 || id == 1086;
+}
 static int restore_allowed(int db, unsigned id, unsigned requested) {
     if (db >= 23 && db <= 31) return 0;  /* golf holes: all 27 restored DB08 lines have their own trigger (Golf Reactions) */
+    if (db == 3) return deli_line(requested) ? (id >= 1073 && id <= 1084) : id < 1073; /* clerks <-> clerks, Tommy <-> Tommy */
     for (size_t i = 0; i < sizeof restore_speaker / sizeof restore_speaker[0]; i++)
         if (restore_speaker[i].db == db && restore_speaker[i].id == id) {
             const unsigned who = restore_speaker[i].who;

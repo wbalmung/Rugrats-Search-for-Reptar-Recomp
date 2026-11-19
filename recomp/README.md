@@ -755,7 +755,10 @@ Frequency Off; the hub's also with Unused Hub Lines Off (Enhancements page, ini 
 `RUGRATS_HUBLINES`); a line already playing delays it 5 s. Still unheard: Cookie Race (687 688, no chatter). 1135 is one
 of Mr. Friend's own clips (1135..1146): it only stands in for one of his chase lines (1136..1146, which The
 Mysterious Mr. Friend's chatter 80080e08 asks for only while he is after the player), never as ambient chatter
-(`RS_CHASE`). The Return of Mr. Friend runs with the hub's voice bank, so none of his lines exist there. No More Cookies has chatter (8008046c), so its 20 lines come
+(`RS_CHASE`). The Return of Mr. Friend runs with the hub's voice bank, so none of his lines exist there. Incident on
+Aisle 7: during the pie gallery (level word `0x800C56A8` & 8) its chatter 80080330 asks for one of the deli clerks'
+8 lines (list `0x800B92DC`) every 6.7 s; the clerks' 4 restored clips (1073 1080 1083 1084) only stand in for one of
+those, and Tommy's restored lines (103 215 220 221 224 230 231 233) never do (`deli_line`). No More Cookies has chatter (8008046c), so its 20 lines come
 through the normal swap. Golf holes use
 Ice Cream Mountain's bank (db 8); its 27 restored lines are not mixed into golf chatter, they play at their own
 moment (Golf Reactions below). Debug: `RUGRATS_VOXLOG=1` logs every voice request and each swap.
