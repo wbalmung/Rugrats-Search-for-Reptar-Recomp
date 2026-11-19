@@ -577,8 +577,13 @@ void host_init(void) {
     window_size(&cw, &ch);
     RECT r = { 0, 0, cw, ch };
     AdjustWindowRect(&r, WS_OVERLAPPEDWINDOW, FALSE);
+    int wx = CW_USEDEFAULT, wy = CW_USEDEFAULT;
+    {   /* RUGRATS_WINPOS=<x>,<y> (debug): open the window there (fullscreen then uses that monitor) */
+        const char *e = getenv("RUGRATS_WINPOS");
+        if (e && sscanf(e, "%d,%d", &wx, &wy) != 2) wx = wy = CW_USEDEFAULT;
+    }
     wnd = CreateWindow("RugratsNative", "Rugrats: Search for Reptar (native)", WS_OVERLAPPEDWINDOW | WS_VISIBLE,
-                       CW_USEDEFAULT, CW_USEDEFAULT, r.right - r.left, r.bottom - r.top, NULL, NULL, inst, NULL);
+                       wx, wy, r.right - r.left, r.bottom - r.top, NULL, NULL, inst, NULL);
     HMODULE xi = LoadLibraryA("xinput1_4.dll");
     if (!xi) xi = LoadLibraryA("xinput9_1_0.dll");
     if (xi) xget = (XInputGetState_t)(void *)GetProcAddress(xi, "XInputGetState");
@@ -2284,6 +2289,23 @@ static void auto_rate(LONGLONG slept) {
     double dt = prev.QuadPart ? (double)(now.QuadPart - prev.QuadPart) / qpf.QuadPart : 0;
     double busy = dt - (double)slept / qpf.QuadPart;
     prev = now;
+    {   /* RUGRATS_DTLOG=1 (debug): every 600 frames, a histogram of real frame times and busy times (1 ms buckets) */
+        static int dl = -1, nn, hd[24], hb[24];
+        if (dl < 0) dl = getenv("RUGRATS_DTLOG") != NULL;
+        if (dl && dt > 0) {
+            int a = (int)(dt * 1000.0), b = (int)(busy * 1000.0);
+            hd[a < 0 ? 0 : a > 23 ? 23 : a]++; hb[b < 0 ? 0 : b > 23 ? 23 : b]++;
+            if (++nn == 600) {
+                char s1[256] = "", s2[256] = "";
+                for (int i = 0; i < 24; i++) {
+                    if (hd[i]) snprintf(s1 + strlen(s1), sizeof s1 - strlen(s1), " %d:%d", i, hd[i]);
+                    if (hb[i]) snprintf(s2 + strlen(s2), sizeof s2 - strlen(s2), " %d:%d", i, hb[i]);
+                }
+                rt_logf("dt %d fps | GPU %.2f ms | frame ms%s | busy ms%s\n", PRESENT_FPS, hw_gpu_ms(), s1, s2);
+                nn = 0; memset(hd, 0, sizeof hd); memset(hb, 0, sizeof hb);
+            }
+        }
+    }
     if (dt <= 0 || dt > 0.25 || keys[VK_TAB]) { n = 0; return; } /* loading hitch, menu, fast-forward */
     int cur = PRESENT_FPS;
     double frame = 1.001 / cur;
@@ -2294,6 +2316,58 @@ static void auto_rate(LONGLONG slept) {
     avg_dt = n ? avg_dt * 0.96 + dt * 0.04 : dt;
     avg_busy = n ? avg_busy * 0.96 + busy * 0.04 : busy;
     n++;
+    /* Refresh-rate ladder (2026-11-16, user: still rough at 4K / 120 Hz). When the target is the display's refresh
+       rate (fps = Hz, or above it once hz_cap found the display holds presents to its refresh), the old steps (120 ->
+       115 -> 99 -> 82) could not line up with a fixed 120 Hz display: frames came 8 / 10 / 16 ms apart (judder), and
+       since busy includes the wait for the display, every lower rate looked MORE loaded, so it kept stepping down,
+       then jumped back to 120 and started over (user's log; reproduced on the 4K TV with RUGRATS_MSAA=8). Now only
+       even shares of the refresh rate are used (120, 60, 40 on 120 Hz): stay at the refresh rate through short misses
+       and drop one share only when about half the frames miss for 2 s (see "over" below); go back up when the measured work (CPU busy at
+       the lower rate, and GPU time from timestamp queries, hw_gpu_ms) fits 80% of the faster frame. A drop within
+       10 s of going up doubles the wait before the next try (3 s up to 30 s), so it can't cycle; a minute at the
+       full rate resets it. RUGRATS_LADDER=0 = the old steps. Rates below the refresh rate (fps < Hz) keep the steps. */
+    {
+        static int ladder = -1;
+        static LONGLONG t_up;
+        static double hold = 3;
+        static int over;
+        if (ladder < 0) { const char *e = getenv("RUGRATS_LADDER"); ladder = e ? atoi(e) != 0 : 1; }
+        const int base = hz_cap ? hz_cap : (display_hz > 30 && abs(opt.fps - display_hz) <= 1) ? opt.fps : 0;
+        if (ladder && base) {
+            int div = (base + cur / 2) / cur;
+            if (div < 1) div = 1;
+            /* drop only when about half the frames miss the refresh (avg > 1.5 frames, i.e. below ~80 fps at 120 Hz) for
+               2 s in a row (2026-11-16, user: "keeping the game at 60 much too often"; their log: drops at avg 10 ms =
+               ~1 in 5 frames late with GPU 3 ms, where 120 with a few late frames is smoother than a locked 60) */
+            over = n == 1 ? 0 : avg_dt > frame * 1.5 ? over + 1 : 0;
+            if (n > cur && over > 2 * cur && base / (div + 1) >= 30) {
+                const int nf = base / (div + 1);
+                const double since_up = t_up ? (double)(now.QuadPart - t_up) / qpf.QuadPart : 1e9;
+                if (since_up < 10.0) hold = hold * 2 > 30 ? 30 : hold * 2;
+                rt_logf("fps: PC can't keep up with %d, presenting %d (1/%d of the %d Hz display; game speed and audio stay at "
+                        "100%%; frame %.2f ms, busy %.2f ms, GPU %.2f ms; next try after %.0f s)\n", cur, nf, div + 1,
+                        display_hz, avg_dt * 1000.0, avg_busy * 1000.0, hw_gpu_ms(), hold);
+                present_fps = nf >= opt.fps ? 0 : nf;
+                update_title();
+                n = 0;
+            } else if (div > 1 && n > hold * cur) {
+                const int up = base / (div - 1);
+                const double gpu = hw_gpu_ms() / 1000.0, work = avg_busy > gpu ? avg_busy : gpu;
+                if (work < 0.8 * 1.001 / up) {
+                    present_fps = up >= opt.fps ? 0 : up;
+                    t_up = now.QuadPart;
+                    rt_logf("fps: headroom again, presenting %d (busy %.2f ms, GPU %.2f ms)\n", PRESENT_FPS, avg_busy * 1000.0,
+                            gpu * 1000.0);
+                    update_title();
+                }
+                n = 0;
+            } else if (div == 1 && t_up && (double)(now.QuadPart - t_up) / qpf.QuadPart > 60.0) {
+                hold = 3;   /* a minute at the full rate: quick retries again */
+                t_up = 0;
+            }
+            return;
+        }
+    }
     if (n > cur && avg_dt > frame * 1.06 && cur > 30) { /* behind for ~1 s */
         int nf = (int)(0.92 / avg_busy);
         if (display_hz > 30 && cur > display_hz && 1.0 / avg_dt >= display_hz * 0.97) {   /* held the display rate */
@@ -2348,6 +2422,28 @@ void host_present(void) {
         if (!direct_frame() || bench_shot || state_shot_now || (test_frames && (frame_no + 1) % test_every == 0)) convert_frame();
         if (state_shot_now) { state_shot_now = 0; save_named_bmp(state_shot_name); }
         QueryPerformanceCounter(&b);
+        {   /* RUGRATS_LAGTEST=<frame from>:<frame to>:<percent>[:<ms, default 9>],... (debug, limiter tests): that
+               share of frames spends the extra ms before the present (9 = misses the next refresh at 120 Hz) */
+            static int ln = -1, lf[8], lt[8], lp[8], lm[8];
+            if (ln < 0) {
+                ln = 0;
+                const char *e = getenv("RUGRATS_LAGTEST");
+                while (e && *e && ln < 8) {
+                    int used = 0;
+                    if (sscanf(e, "%d:%d:%d%n", &lf[ln], &lt[ln], &lp[ln], &used) < 3 || !used) break;
+                    e += used; lm[ln] = 9;
+                    if (*e == ':') { used = 0; sscanf(e + 1, "%d%n", &lm[ln], &used); e += 1 + used; }
+                    ln++; if (*e == ',') e++;
+                }
+            }
+            for (int i = 0; i < ln; i++)
+                if (frame_no >= lf[i] && frame_no < lt[i] && (int)((unsigned)frame_no * 37u % 100u) < lp[i]) {
+                    LARGE_INTEGER s, t;
+                    QueryPerformanceCounter(&s);
+                    do QueryPerformanceCounter(&t); while ((t.QuadPart - s.QuadPart) * 1000 < lm[i] * qpf.QuadPart);
+                    break;
+                }
+        }
         show();
         QueryPerformanceCounter(&c);
         t_last = c;
@@ -2533,11 +2629,49 @@ static void load_config(void) {
     CreateDirectoryA(opt.saves, NULL);
 }
 
+/* RUGRATS_SAMPLE=<seconds> (debug profiler): after that delay, a thread samples the main thread's instruction pointer
+   every ~1 ms; at exit "samples.txt" in the exe folder gets "<rva hex> <count>" lines (map with an unstripped link). */
+static HANDLE smp_thread_main;
+static uint32_t *smp_rva;
+static int smp_n, smp_cap = 1 << 20, smp_delay;
+static char smp_path[1100];
+static DWORD WINAPI smp_run(LPVOID p) {
+    (void)p;
+    Sleep((DWORD)smp_delay * 1000);
+    const uintptr_t base = (uintptr_t)GetModuleHandleA(NULL);
+    timeBeginPeriod(1);
+    while (smp_n < smp_cap) {
+        Sleep(1);
+        if (SuspendThread(smp_thread_main) == (DWORD)-1) break;
+        CONTEXT c; c.ContextFlags = CONTEXT_CONTROL;
+        if (GetThreadContext(smp_thread_main, &c)) smp_rva[smp_n++] = (uint32_t)(c.Rip - base);
+        ResumeThread(smp_thread_main);
+    }
+    return 0;
+}
+static void smp_dump(void) {
+    FILE *f = fopen(smp_path, "w");
+    if (!f) return;
+    for (int i = 0; i < smp_n; i++) fprintf(f, "%x\n", smp_rva[i]);
+    fclose(f);
+}
+static void smp_start(const char *dir) {
+    const char *e = getenv("RUGRATS_SAMPLE");
+    if (!e) return;
+    smp_delay = atoi(e);
+    smp_rva = malloc(sizeof *smp_rva * (size_t)smp_cap);
+    snprintf(smp_path, sizeof smp_path, "%s\\samples.txt", dir);
+    DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &smp_thread_main, 0, FALSE, DUPLICATE_SAME_ACCESS);
+    atexit(smp_dump);
+    CreateThread(NULL, 0, smp_run, NULL, 0, NULL);
+}
+
 int main(int argc, char **argv) {
     char dir[1024], logp[1100];
     exe_dir(dir, sizeof dir);
     snprintf(logp, sizeof logp, "%s\\rugrats.log", dir);
     rt_log = fopen(logp, "w");
+    smp_start(dir);
     load_config();
     mods_init(dir, ini_path);
     {

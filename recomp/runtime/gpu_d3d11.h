@@ -52,3 +52,4 @@ void hw_flush(void);
 const uint16_t *hw_readback(void); /* whole hi-res VRAM as 15-bit (slow; menu / test shots) */
 int hw_read_native(int x0, int y0, int x1, int y1, uint16_t *out); /* native rect of the target -> out (pitch 1024) */
 void hw_present(int sx, int sy, int w, int h, int dx, int dy, int dw, int dh, int smooth, int sync, int tear);
+double hw_gpu_ms(void);             /* recent GPU time of a frame's final batch + present draw (ms, averaged), 0 = unknown */

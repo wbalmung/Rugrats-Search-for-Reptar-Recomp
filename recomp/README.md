@@ -126,6 +126,14 @@ stream with empty padding sectors after the header. Two port bugs, both checked 
   the display rate on the way up). If a rate above the display's refresh fails while frames still arrive at the
   display rate (fullscreen presents can be capped at the refresh even with VSync off), it stays at the display
   rate and stops trying higher ones until the frame rate option or the display changes.
+  When the target is the display's refresh rate (fps = Hz, or capped to it as above), only even shares of the
+  refresh are used (120 / 60 / 40 on 120 Hz), so frames always line up with the display: it stays at the refresh
+  rate through short misses, drops one share only when frames average over 1.5 refreshes (below ~80 fps at 120 Hz) for 2 s, and
+  goes back up when the CPU time and the GPU time (timestamp queries, `hw_gpu_ms` in gpu_d3d11.c) fit 80% of the
+  faster frame. A drop soon after going up doubles the wait before the next try (3 s up to 30 s).
+  `RUGRATS_LADDER=0` = the old free steps. Debug: `RUGRATS_DTLOG=1` (frame / busy time histograms + GPU ms every
+  600 frames), `RUGRATS_WINPOS=x,y` (open the window on another monitor), `RUGRATS_LAGTEST=from:to:pct[:ms],...`
+  (that share of presented frames spends extra ms, 9 by default, before the present).
 
 ## Presentation / VSync
 

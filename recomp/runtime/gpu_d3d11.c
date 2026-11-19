@@ -912,9 +912,11 @@ static void set_pass(int pass) {
 
 uint64_t hw_prof_flushes, hw_prof_verts, hw_prof_rows, hw_prof_runs, hw_prof_dm[8];
 
+static void gt_begin(void), gt_end(void);
 void hw_flush(void) {
     rd_x0 = 1 << 30; rd_x1 = -1;
     if (!S || !nverts) return;
+    gt_begin();
     if (dirty_y0 <= dirty_y1) {
         D3D11_BOX box = { 0, (UINT)dirty_y0, 0, 1024, (UINT)dirty_y1 + 1, 1 };
         ID3D11DeviceContext_UpdateSubresource(ctx, (ID3D11Resource *)vtex, 0, &box, vram + dirty_y0 * 1024, 2048, 0);
@@ -1069,6 +1071,7 @@ void hw_flush(void) {
     hw_prof_runs += (uint64_t)nruns;
     for (int i = 0; i < nruns; i++) hw_prof_dm[runs[i].dm & 7]++;
     nverts = nruns = nsegs = 0;
+    gt_end();
 }
 
 static void copy_piece(int sx, int sy, int dx, int dy, int w, int h) {
@@ -1187,8 +1190,74 @@ int hw_read_native(int x0, int y0, int x1, int y1, uint16_t *out) {
     return 1;
 }
 
+/* GPU frame time for the frame-rate limiter (host_win32.c auto_rate, 2026-11-16): a pair of timestamp queries around
+   every batch (hw_flush) and the MSAA resolve of a frame, summed; read back a few frames later without waiting (a
+   frame whose slot is still in flight is not measured). Gaps between batches (the GPU idle while the CPU runs the
+   game) and the wait for the display are not counted. hw_gpu_ms() = moving average in ms, 0 until known. */
+#define GT_N 4
+#define GT_P 16
+static struct { ID3D11Query *dj, *t[2 * GT_P]; int np, state; } gt[GT_N];   /* state 0 free, 1 open, 2 in flight */
+static int gt_i, gt_ok = -1, gt_pair;   /* gt_pair: a pair is open */
+static double gt_avg;
+double hw_gpu_ms(void) { return S ? gt_avg : 0; }
+static void gt_init(void) {
+    gt_ok = 1;
+    for (int k = 0; k < GT_N && gt_ok; k++) {
+        D3D11_QUERY_DESC qd = { D3D11_QUERY_TIMESTAMP_DISJOINT, 0 };
+        if (FAILED(ID3D11Device_CreateQuery(dev, &qd, &gt[k].dj))) gt_ok = 0;
+        qd.Query = D3D11_QUERY_TIMESTAMP;
+        for (int j = 0; j < 2 * GT_P && gt_ok; j++) if (FAILED(ID3D11Device_CreateQuery(dev, &qd, &gt[k].t[j]))) gt_ok = 0;
+    }
+    if (!gt_ok) rt_logf("hwgpu: no timestamp queries (frame-rate limiter uses CPU time only)\n");
+}
+static void gt_read(void) {
+    for (int k = 0; k < GT_N; k++) {
+        if (gt[k].state != 2) continue;
+        D3D11_QUERY_DATA_TIMESTAMP_DISJOINT dj;
+        if (ID3D11DeviceContext_GetData(ctx, (ID3D11Asynchronous *)gt[k].dj, &dj, sizeof dj, D3D11_ASYNC_GETDATA_DONOTFLUSH) != S_OK) continue;
+        UINT64 sum = 0;
+        int ok = 1;
+        for (int j = 0; j < gt[k].np && ok; j++) {
+            UINT64 a, b;
+            if (ID3D11DeviceContext_GetData(ctx, (ID3D11Asynchronous *)gt[k].t[2 * j], &a, sizeof a, D3D11_ASYNC_GETDATA_DONOTFLUSH) != S_OK ||
+                ID3D11DeviceContext_GetData(ctx, (ID3D11Asynchronous *)gt[k].t[2 * j + 1], &b, sizeof b, D3D11_ASYNC_GETDATA_DONOTFLUSH) != S_OK) ok = 0;
+            else if (b > a) sum += b - a;
+        }
+        if (!ok) continue;
+        gt[k].state = 0;
+        if (dj.Disjoint || !dj.Frequency) continue;
+        const double ms = (double)sum * 1000.0 / (double)dj.Frequency;
+        gt_avg = gt_avg > 0 ? gt_avg * 0.9 + ms * 0.1 : ms;
+    }
+}
+static void gt_begin(void) {
+    if (gt_ok < 0) gt_init();
+    if (!gt_ok || gt_pair) return;
+    if (gt[gt_i].state == 0) { gt[gt_i].state = 1; gt[gt_i].np = 0; ID3D11DeviceContext_Begin(ctx, (ID3D11Asynchronous *)gt[gt_i].dj); }
+    if (gt[gt_i].state != 1 || gt[gt_i].np >= GT_P) return;
+    ID3D11DeviceContext_End(ctx, (ID3D11Asynchronous *)gt[gt_i].t[2 * gt[gt_i].np]);
+    gt_pair = 1;
+}
+static void gt_end(void) {
+    if (!gt_pair) return;
+    ID3D11DeviceContext_End(ctx, (ID3D11Asynchronous *)gt[gt_i].t[2 * gt[gt_i].np + 1]);
+    gt[gt_i].np++;
+    gt_pair = 0;
+}
+static void gt_frame_start(void) { if (gt_ok > 0) gt_read(); }
+static void gt_frame_end(void) {
+    if (gt_ok <= 0) return;
+    gt_end();
+    if (gt[gt_i].state == 1) {
+        ID3D11DeviceContext_End(ctx, (ID3D11Asynchronous *)gt[gt_i].dj);
+        gt[gt_i].state = 2;
+        gt_i = (gt_i + 1) % GT_N;
+    }
+}
+
 void hw_present(int sx, int sy, int w, int h, int dx, int dy, int dw, int dh, int smooth, int sync, int tear) {
     if (!S) return;
+    gt_frame_start();
     hw_flush();
     if (NS > 1) {   /* resolve only the shown region (wraps at the VRAM edge: clamp, like the view) */
         int rx = sx * S - 2, ry = sy * S - 2, rw = w * S + 4, rh = h * S + 4;   /* + 2 px: filters read the border */
@@ -1196,8 +1265,11 @@ void hw_present(int sx, int sy, int w, int h, int dx, int dy, int dw, int dh, in
         if (ry < 0) { rh += ry; ry = 0; }
         if (rx + rw > W) rw = W - rx;
         if (ry + rh > H) rh = H - ry;
+        gt_begin();
         resolve(rx, ry, rw, rh);
+        gt_end();
     }
+    gt_frame_end();   /* before the present: a flip waiting for the display must not count as GPU work */
     d3d_present_view(NS > 1 ? rsrv1 : rsrv, W, H, sx * S, sy * S, w * S, h * S, dx, dy, dw, dh, smooth, sync, tear);
     /* RUGRATS_GPUSYNC=1 (debug): wait until the GPU has finished the frame, so RUGRATS_PROF frame times include
        the GPU's drawing (with RUGRATS_NOPRESENT the work is otherwise only queued) */
