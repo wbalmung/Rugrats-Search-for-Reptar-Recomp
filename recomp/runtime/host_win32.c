@@ -460,12 +460,25 @@ static void back_ensure(int w, int h) {
     back_w = w; back_h = h;
 }
 
-/* paused frame, dimmed, with the menu on top, into the back buffer */
+/* paused frame, dimmed, with the menu on top, into the back buffer. The game is paused, so the dimmed frame is
+   made once and copied each menu frame (the HALFTONE stretch + dim of a full window cost tens of ms at 1440p/4K
+   and made the menu sluggish); remade when the window size / aspect / filter changes or the menu reopens. */
+static uint32_t *menu_bg;
+static int menu_bg_w, menu_bg_h, menu_bg_key = -1;
+static void menu_bg_reset(void) { menu_bg_key = -1; }
 static void compose_menu(int cw, int ch) {
     back_ensure(cw, ch);
-    paint_frame(back_dc, cw, ch);
-    GdiFlush();
-    for (int i = 0; i < cw * ch; i++) back_px[i] = (back_px[i] >> 2) & 0x3F3F3F;
+    int key = (opt.widescreen && !frame_43()) | (opt.smooth ? 2 : 0);
+    if (!menu_bg || menu_bg_key != key || menu_bg_w != cw || menu_bg_h != ch) {
+        paint_frame(back_dc, cw, ch);
+        GdiFlush();
+        for (int i = 0; i < cw * ch; i++) back_px[i] = (back_px[i] >> 2) & 0x3F3F3F;
+        uint32_t *nb = realloc(menu_bg, (size_t)cw * ch * 4);
+        if (nb) { menu_bg = nb; memcpy(menu_bg, back_px, (size_t)cw * ch * 4); menu_bg_w = cw; menu_bg_h = ch; menu_bg_key = key; }
+    } else {
+        GdiFlush();
+        memcpy(back_px, menu_bg, (size_t)cw * ch * 4);
+    }
     menu_draw(back_dc, cw, ch);
     GdiFlush();
 }
@@ -488,12 +501,13 @@ static void show(void);
 static DWORD cursor_moved;
 static int cursor_hidden;
 static POINT cursor_last = { -100000, -100000 };
-static void cursor_move(LPARAM lp) {
+static int cursor_move(LPARAM lp) { /* 1 = the mouse really moved */
     POINT p = { (short)LOWORD(lp), (short)HIWORD(lp) };
-    if (p.x == cursor_last.x && p.y == cursor_last.y) return;
+    if (p.x == cursor_last.x && p.y == cursor_last.y) return 0;
     cursor_last = p;
     cursor_moved = GetTickCount();
     if (cursor_hidden) { cursor_hidden = 0; SetCursor(LoadCursor(NULL, IDC_ARROW)); }
+    return 1;
 }
 static void cursor_tick(void) {
     if (cursor_hidden || GetTickCount() - cursor_moved < CURSOR_IDLE_MS) return;
@@ -538,8 +552,9 @@ static LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
     case WM_KEYUP: case WM_SYSKEYUP: keys[wp & 255] = 0; return 0;
     case WM_KILLFOCUS: memset(keys, 0, sizeof keys); return 0;
     case WM_MOUSEMOVE:
-        cursor_move(lp);
-        if (menu_open) menu_mouse((short)LOWORD(lp), (short)HIWORD(lp), 0, 0);
+        /* hover selects only on a real move: Windows also sends WM_MOUSEMOVE without one (window shown, cursor
+           hidden, ...), which made a parked cursor keep grabbing the row under it (e.g. Reptar 2010 in Level Select) */
+        if (cursor_move(lp) && menu_open) menu_mouse((short)LOWORD(lp), (short)HIWORD(lp), 0, 0);
         return 0;
     case WM_SETCURSOR:
         if (LOWORD(lp) == HTCLIENT && cursor_hidden) { SetCursor(NULL); return TRUE; }
@@ -2056,9 +2071,11 @@ static void menu_save(void) {
 }
 
 /* controller: either stick click opens/closes; d-pad or left stick navigates with key repeat */
+static int pad_inject = -1;  /* menu pad test (RUGRATS_MENU_PADTEST): >= 0 replaces the real controllers */
 static WORD xin_buttons(void) {
     XINPUT_STATE st;
     WORD w = 0;
+    if (pad_inject >= 0) return (WORD)pad_inject;
     if (xget && xget(0, &st) == ERROR_SUCCESS) {
         w = st.Gamepad.wButtons;
         if (st.Gamepad.sThumbLY > 16000) w |= XINPUT_GAMEPAD_DPAD_UP;
@@ -2150,7 +2167,41 @@ static void write_bmp(const char *name, const uint32_t *px, int w, int h) {
 }
 
 /* RUGRATS_MENU=<frame>: in test mode, open the menu at that frame, step through it and dump shots */
+static int shot_pad_n(void) { static int n = 100; return n++; }
 static void menu_test_step(int step) {
+    /* RUGRATS_MENU_PADTEST=1: controller navigation through menu_pad (injected states, press + release), plus a
+       WM_MOUSEMOVE that repeats the last position (no real move) which must not change the selection */
+    if (getenv("RUGRATS_MENU_PADTEST")) {
+        enum { U = XINPUT_GAMEPAD_DPAD_UP, D = XINPUT_GAMEPAD_DPAD_DOWN, L = XINPUT_GAMEPAD_DPAD_LEFT,
+               R = XINPUT_GAMEPAD_DPAD_RIGHT, A = XINPUT_GAMEPAD_A, B = XINPUT_GAMEPAD_B,
+               RS = XINPUT_GAMEPAD_RIGHT_SHOULDER, MV = -2, LV = -3, SH = -4 };
+        static const int ps[] = { D, 0, D, 0, SH, LV, MV, 0, D, 0, D, 0, MV, MV, 0, SH, U, 0, RS, 0, U, 0, MV, SH,
+                                  B, 0, D, 0, D, 0, MV, MV, U, 0, SH, RS, 0, D, 0, SH };
+        static int xy_set, mx, my;
+        int ns = (int)(sizeof ps / sizeof ps[0]);
+        if (step == 0) {
+            XINPUT_STATE st; uint32_t d = ds_buttons();
+            rt_logf("menu pad test: real pads now xinput %s buttons %04x, sony %u pads buttons %08x\n",
+                    xget && xget(0, &st) == ERROR_SUCCESS ? "yes" : "no",
+                    xget && xget(0, &st) == ERROR_SUCCESS ? st.Gamepad.wButtons : 0, (unsigned)ds_count(), (unsigned)d);
+        }
+        pad_inject = 0;
+        if (step >= ns) { pad_inject = -1; menu_open = 0; return; }
+        int k = ps[step];
+        if (k == LV) { menu_set_tab(T_ENH); ac_levels(); }
+        else if (k == MV) {
+            if (!xy_set && lvl_open) {   /* park the "cursor" on the 7th visible row */
+                xy_set = 1; mx = (lv_x0 + lv_x1) / 2; my = lv_y0 + lv_rowh * 6 + lv_rowh / 2;
+            }
+            SendMessage(wnd, WM_MOUSEMOVE, 0, MAKELPARAM(mx, my));
+        } else if (k == SH) {
+            char n[32]; snprintf(n, sizeof n, "menu%d", shot_pad_n());
+            if (back_px) write_bmp(n, back_px, back_w, back_h);
+        } else pad_inject = k;
+        rt_logf("menu pad test: step %d in %d -> lvl_open %d lvl_sel %d (%s) | tab %d menu_sel %d\n", step, k, lvl_open,
+                lvl_sel, lvl_list[lvl_sel].name, menu_tab, menu_sel);
+        return;
+    }
     static const int script[] = { 0, VK_DOWN, VK_DOWN, VK_DOWN, 0, VK_RIGHT, 0, VK_UP, VK_UP, VK_RIGHT, 0,
                                   VK_LEFT, VK_DOWN, VK_DOWN, VK_LEFT, 'E', 0, 'E', 0, VK_UP, 'E', 0, VK_NEXT, 0,
                                   VK_ESCAPE };
@@ -2229,6 +2280,7 @@ static void menu_test_step(int step) {
 
 static void menu_run(void) {
     convert_frame(); /* the menu draws over the 32-bit frame */
+    menu_bg_reset();
     want_fs = fullscreen;
     menu_sel = 0;
     lvl_open = 0;
@@ -2240,6 +2292,8 @@ static void menu_run(void) {
     update_title();
     rt_logf("menu open\n");
     MSG msg;
+    LARGE_INTEGER mnext;
+    QueryPerformanceCounter(&mnext);
     for (int step = 0; menu_open && !quit; step++) {
         while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
             TranslateMessage(&msg);
@@ -2250,7 +2304,32 @@ static void menu_run(void) {
         if (!menu_open) break;
         show();
         if (test_frames) menu_test_step(step);
-        else Sleep(15);
+        else if (!vsync_interval()) {
+            /* pace to the game's frame rate (was Sleep(15) on top of the present: ~30 fps or less) */
+            LONGLONG per = qpf.QuadPart * 1001 / ((LONGLONG)(PRESENT_FPS > 0 ? PRESENT_FPS : 60) * 1000);
+            LARGE_INTEGER now;
+            mnext.QuadPart += per;
+            for (;;) {
+                QueryPerformanceCounter(&now);
+                LONGLONG left = mnext.QuadPart - now.QuadPart;
+                if (left <= 0) break;
+                if (left * 1000 / qpf.QuadPart > 2) Sleep(1);
+            }
+            if (now.QuadPart - mnext.QuadPart > qpf.QuadPart / 10) mnext = now; /* fell behind: resync */
+        }                                   /* vsync on: Present() already waits for the display */
+        {   /* debug: RUGRATS_MENULOG=1 logs the menu frame rate once a second */
+            static int ml = -1; static LARGE_INTEGER t0; static int n;
+            if (ml < 0) ml = getenv("RUGRATS_MENULOG") != NULL;
+            if (ml) {
+                LARGE_INTEGER now; QueryPerformanceCounter(&now);
+                if (!t0.QuadPart) t0 = now;
+                n++;
+                if (now.QuadPart - t0.QuadPart >= qpf.QuadPart) {
+                    rt_logf("menu: %.1f fps (target %d)\n", n * (double)qpf.QuadPart / (double)(now.QuadPart - t0.QuadPart), PRESENT_FPS);
+                    t0 = now; n = 0;
+                }
+            }
+        }
     }
     menu_open = 0;
     if (mod_open) mod_close();   /* F1 / Start closed everything: still save the mod list */
