@@ -201,6 +201,8 @@ SETTINGS = [
      "On: the babies' random lines also include ones the game recorded but never plays (unheard ones first, then they repeat)."),
     ("Enhancements", "Unused Hub Lines", "audio", "voice_hub", 1, BOOL, OFF_ON,
      "On: in the house between levels, Tommy now and then says one of his unused lines (needs Restored Lines On)."),
+    ("Enhancements", "Golf Reactions", "audio", "voice_golf", 1, BOOL, OFF_ON,
+     "On: mini golf babies react to hole in one, birdie, bogey and over par, and sometimes while the ball rolls. Off: original."),
     ("Enhancements", "Reptar Bar Sound", "audio", "bar_roar", 1, [1, 0, 2], ["Chime + roar", "Chime only", "Off"],
      "The sound when you pick up a Reptar bar: the original chime and roar, the chime alone, or nothing."),
     ("Enhancements", "Note Fade-out", "audio", "note_fade", 1, BOOL, OFF_ON,

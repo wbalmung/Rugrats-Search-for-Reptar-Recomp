@@ -757,7 +757,23 @@ of Mr. Friend's own clips (1135..1146): it only stands in for one of his chase l
 Mysterious Mr. Friend's chatter 80080e08 asks for only while he is after the player), never as ambient chatter
 (`RS_CHASE`). The Return of Mr. Friend runs with the hub's voice bank, so none of his lines exist there. No More Cookies has chatter (8008046c), so its 20 lines come
 through the normal swap. Golf holes use
-Ice Cream Mountain's bank (db 8). Debug: `RUGRATS_VOXLOG=1` logs every voice request and each swap.
+Ice Cream Mountain's bank (db 8); its 27 restored lines are not mixed into golf chatter, they play at their own
+moment (Golf Reactions below). Debug: `RUGRATS_VOXLOG=1` logs every voice request and each swap.
+
+Golf Reactions (Enhancements page, ini `[audio] voice_golf`, default 1 = On; `RUGRATS_GOLFVOX`). When the ball drops
+(`8007a9d8`, holes db 23..31) the game asks for one reaction line and in the same frame starts the next hole (its
+scorecard music takes the CD drive) or the "You were over par" screen (pauses the CD), so in the original these lines
+are never heard; only hole 9's announcer at or under par plays. The hook picks the line (golf character = player
+`+0x15c`: 1 Tommy, 2 Chuckie, 3 Angelica, 4 Lil, 5 Phil; strokes vs par): hole in one Tommy 70, Angelica 586, Phil
+812; birdie Tommy 73 (restored), Chuckie 338, Angelica 589, Phil 811, Lil 939; other results at or under par the
+game's own list for that baby (none for Tommy); bogey Chuckie 336, Angelica 587, Phil 809; double bogey Tommy 72,
+Chuckie 337, Angelica 588, Phil 810, Lil 938; worse: the game's fail list for that baby plus the restored announcer
+lines 1211 1212 1218 (and Angelica's 524 593). It starts that line (after one still playing, if any) and runs the
+hole finish only when it has ended plus 0.2 s (10 s safety), with the original's own voice requests muted and the
+pad ignored meanwhile. No line for the result: the game goes on at once. Hole 9 at or under par is left alone.
+Ball rolling (`8005fcb8`, stroke counted at launch): 1 swing in 3, 0.3 s later, the baby's rolling line (Tommy 270
+82, Chuckie 347, Angelica 598, Phil 820 868, Lil 949 995; unheard first, never the same twice in a row) if nothing
+else is playing. Off: original.
 
 Level Select (Enhancements page, "Level Select..." row): a list of the 28 playable levels (game database numbers;
 not 0 menus, 8 Ice Cream Mountain, 19 Be Bad, 22 Multiplayer Golf, see "Per-level performance test"). Going there

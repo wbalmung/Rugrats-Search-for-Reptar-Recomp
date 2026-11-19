@@ -1,5 +1,6 @@
 /* Native hooks on specific guest functions (see HOOKS in tools/recomp.py). */
 #include <stdlib.h>
+#include <time.h>
 #include <math.h>
 #include "hw.h"
 
@@ -1733,10 +1734,12 @@ int rt_hook_8005be24(void) {
 }
 void hooks_meter_state(StateIO *s);
 static double feather_acc;   /* goose feathers, see rt_hook_8008864c */
+static void golfvox_state(StateIO *s);
 void hooks_golf_state(StateIO *s) {
     st_prefix(s, "golf");
     ST(s, golf_rem); ST(s, lockaim_rem); ST(s, feather_acc);
     hooks_meter_state(s);
+    golfvox_state(s);
 }
 
 /* ---- power meter speed (Triangle meter, e.g. Angelica's diving board) ------------------------------------
@@ -2777,6 +2780,8 @@ static int chatter_inside; /* 1 while the level's chatter function runs (Restore
 static int chatter_db;     /* the level 800818e0 dispatches on (0x800C5678; -1 = golf hole) */
 static int hub_force;      /* 1 while hub_chatter (timed chatter) asks 8008da4c for a restored line (no 50% gate, no fallback) */
 void f_8008da4c(void);
+static int golf_frame(int32_t dt);   /* Golf Reactions (below) */
+static int golf_mute;                /* 1 while the held hole finish runs: its own voice requests are skipped */
 /* Timed chatter (part of Restored Lines, user 2026-11-17) for levels with no chatter function (0x800B9618[db] = 0)
    whose restored lines would stay unheard: hub (db 1: 29 159 193 196 200 225, Tommy), Egg Hunt (db 18: 686 687
    688); none of them used by those levels' triggers / hint objects (RAM scan of in-level states, 2026-11-17).
@@ -2837,6 +2842,7 @@ int rt_hook_800818e0(void) {
         uint32_t who = mem_r32(0x800C5680u);                 /* playing character = player obj+0x15c (8005928c..) */
         if (vlog && who != last_who) rt_logf("vox character %u (db %d) vbl %u\n", who, chatter_db, hooks_frame());
         last_who = who; }
+    if (golf_frame(dt)) return 1;                        /* Golf Reactions: holding a hole end -> no chatter */
     inside = 1; chatter_inside = 1;
     f_800818e0();                                        /* the original */
     inside = 0; chatter_inside = 0;
@@ -2879,7 +2885,8 @@ static int restore_listed(unsigned id) {
 /* Who says a restored line, in levels where the player character changes (sorted by ear, 2026-11-17). who = the
    playing character, 0x800C5680 (= player object 0x800E2B48 +0x15c, written by the player swaps 800585b0 /
    8005928c / 80059328; also what 8008df78 adds to 2040 for the baby's own lines): 1 Tommy, 2 Chuckie, 3 Phil,
-   4 Lil (seen on golf hole states: 4 = Lil; 3 = Phil by elimination), 6 Angelica, 9 Reptar. Toy Palace's own
+   4 Lil (seen on golf hole states: 4 = Lil; 3 = Phil by elimination - NOTE: on the golf holes 3 is Angelica and
+   5 Phil, seen 2026-11-18; no entry below depends on 3), 6 Angelica, 9 Reptar. Toy Palace's own
    chatter (80080a20) branches on it too (1 = Tommy half, 2 = Chuckie half). RS_ANY = plays whoever is playing
    (Angelica, present but not playable); RS_SKIP = never restore in that level (a copy of a line the game already
    plays, or a line in the wrong level). Ids not listed for a level play in any part of it. */
@@ -2907,6 +2914,7 @@ static const struct { uint8_t db; uint8_t who; uint16_t id; } restore_speaker[] 
 };
 static int mrfriend_chase_line(unsigned id) { return id >= 1136 && id <= 1146 && id != 1143; }
 static int restore_allowed(int db, unsigned id, unsigned requested) {
+    if (db >= 23 && db <= 31) return 0;  /* golf holes: all 27 restored DB08 lines have their own trigger (Golf Reactions) */
     for (size_t i = 0; i < sizeof restore_speaker / sizeof restore_speaker[0]; i++)
         if (restore_speaker[i].db == db && restore_speaker[i].id == id) {
             const unsigned who = restore_speaker[i].who;
@@ -2923,6 +2931,7 @@ int rt_hook_8008da4c(void) {
     const uint32_t gp = cpu.r[28];
     if (log) rt_logf("vox play %u ra %08x chatter %d state %d vbl %u\n", cpu.r[4], cpu.r[31], chatter_inside,
                      (int16_t)mem_r16(gp + 0x758), hooks_frame());
+    if (golf_mute) { if (log) rt_logf("vox golf: muted %u (reaction already played)\n", cpu.r[4]); return 1; }
     if (!opt.voice_restore || !chatter_inside) return 0;
     const int none = hub_force;                          /* hub chatter: nothing to swap in -> play nothing */
     int16_t st = (int16_t)mem_r16(gp + 0x758);
@@ -2961,6 +2970,227 @@ int rt_hook_8008da4c(void) {
                      chatter_db, mem_r32(0x800C5680u));
     cpu.r[4] = pick;
     return 0;                                            /* the original plays the swapped id */
+}
+
+/* ---- Golf Reactions (opt.voice_golf, user 2026-11-18; HANDOFF has the trace) ------------------------------------
+   Golf holes are db 23..31 (all use Ice Cream Mountain's DB08 voice bank). Golf character = player obj +0x15c:
+   1 Tommy, 2 Chuckie, 3 Angelica, 4 Lil, 5 Phil. Hole index = 80057d50(db) (table below), par = byte 0x800B7FFC[idx],
+   strokes = player +0x1b6[idx] (counted at ball launch, 8005fcb8).
+   Hole finish 8007a9d8(player) (ball in cup, 800580a8) asks the voice player for ONE line and in the same frame
+   queues the next hole (holes 1-8: the scorecard music's Setloc takes the drive before a voice sector is read) or
+   the "You were over par" screen (8008dbec pauses the CD), so in the shipped game these lines are never heard.
+   Only hole 9 at / under par (announcer + course end) is audible. Here: pick the line the game would (plus the
+   restored ones, per character, sorted by ear by the user), start it, and run 8007a9d8 only when it has finished
+   (its own voice requests muted; pad ignored meanwhile). No line for this result -> 8007a9d8 runs at once.
+   Ball rolling: the game's chatter plays these only if its timer runs out during the 0.67 s swing (state 15);
+   here 1 swing in 3 gets one 0.3 s after launch (unheard first, never the same twice in a row). */
+void f_8007a9d8(void);
+static uint32_t golf_hold;                  /* player object while a hole end waits for its line, else 0 */
+static int32_t golf_hold_left, golf_hold_tail, golf_ball_left = -1;
+static uint32_t golf_rng = 0x6C8E9CF5u;
+static uint32_t golf_ball_last, golf_hold_id;  /* golf_hold_id: reaction still to say once the playing line ends */
+static void golfvox_state(StateIO *s) {
+    ST(s, golf_hold); ST(s, golf_hold_left); ST(s, golf_hold_tail); ST(s, golf_ball_left); ST(s, golf_ball_last);
+    ST(s, golf_hold_id);
+}
+int hooks_golf_holding(void) { return golf_hold != 0; }
+static int golf_log(void) { static int l = -1; if (l < 0) l = getenv("RUGRATS_VOXLOG") != NULL; return l; }
+static uint32_t golf_rand(void) {
+    static int seeded;
+    if (!seeded) {                               /* else the first swing after every launch would get a ball line */
+        seeded = 1;
+        const char *e = getenv("RUGRATS_GOLFSEED");      /* tests: fixed seed */
+        golf_rng ^= e ? (uint32_t)strtoul(e, 0, 0) : (uint32_t)time(NULL) * 2654435761u;
+        if (!golf_rng) golf_rng = 1;
+    }
+    golf_rng ^= golf_rng << 13; golf_rng ^= golf_rng >> 17; golf_rng ^= golf_rng << 5; return golf_rng;
+}
+/* golf db -> hole index (80057d50), -1 = not a golf hole / title demo */
+static int golf_idx(void) {
+    static const int8_t idx[9] = { 4, 2, 0, 6, 8, 1, 3, 5, 7 };   /* db 23..31 */
+    const uint32_t db = mem_r32(0x800C5678u);
+    if (db < 23 || db > 31 || mem_r8(0x800C5699u) == 1) return -1;
+    return idx[db - 23];
+}
+enum { GT = 1, GC = 2, GA = 3, GL = 4, GP = 5 };
+#define GPICK(a) ((a)[golf_rand() % (sizeof(a) / sizeof((a)[0]))])
+/* the line for this hole result, or 0 = none (then the game runs as usual) */
+static unsigned golf_pick(int who, int s, int p, int idx) {
+    if (s <= p) {
+        if (idx >= 8) return 0;                  /* hole 9: the game's announcer line, already heard */
+        if (s == 1) {                            /* hole in one */
+            if (who == GT) return 70;
+            if (who == GA) return 586;
+            if (who == GP) return 812;
+        }
+        if (s == p - 1) {                        /* birdie (Tommy 73 restored: the game has no Tommy birdie) */
+            if (who == GT) return 73;
+            if (who == GC) return 338;
+            if (who == GA) return 589;
+            if (who == GP) return 811;
+            if (who == GL) return 939;
+        }
+        /* the game's own pick (lists 0x800B92A8 / B4 / BC / C4); Tommy has none */
+        static const uint16_t c[] = { 1195, 1206, 305, 335, 339 }, a[] = { 1195, 1206, 590, 620 },
+                              ph[] = { 1195, 1206, 813 }, l[] = { 1195, 1206, 936, 940, 994 };
+        switch (who) {
+        case GC: return GPICK(c);
+        case GA: return GPICK(a);
+        case GP: return GPICK(ph);
+        case GL: return GPICK(l);
+        }
+        return 0;
+    }
+    if (s == p + 1) {                            /* bogey */
+        if (who == GC) return 336;
+        if (who == GA) return 587;
+        if (who == GP) return 809;
+    }
+    if (s == p + 2) {                            /* double bogey */
+        if (who == GT) return 72;
+        if (who == GC) return 337;
+        if (who == GA) return 588;
+        if (who == GP) return 810;
+        if (who == GL) return 938;
+    }
+    /* other over-par results: the game's fail list for the character (0x800B9250 / 60 / 70 / 84 / 98) plus the
+       restored announcer lines 1211 1212 1218 (anyone) and Angelica's 524 593 */
+    static const uint16_t ft[] = { 1209, 1213, 1216, 79, 81, 78, 77, 12, 1211, 1212, 1218 },
+                          fc[] = { 1209, 1213, 1216, 342, 343, 344, 346, 1211, 1212, 1218 },
+                          fa[] = { 1209, 1213, 1216, 523, 525, 594, 595, 592, 596, 597, 1211, 1212, 1218, 524, 593 },
+                          fp[] = { 1209, 1213, 1216, 743, 814, 815, 817, 818, 819, 1211, 1212, 1218 },
+                          fl[] = { 1209, 1213, 1216, 942, 944, 946, 947, 1211, 1212, 1218 };
+    switch (who) {
+    case GT: return GPICK(ft);
+    case GC: return GPICK(fc);
+    case GA: return GPICK(fa);
+    case GP: return GPICK(fp);
+    case GL: return GPICK(fl);
+    }
+    return 0;
+}
+/* index of id in the loaded voice table (gp+0x76c ids, n at gp+0x76a), -1 = not loaded */
+static int golf_table_index(unsigned id) {
+    const uint32_t gp = cpu.r[28], ids = mem_r32(gp + 0x76c);
+    const int n = (int16_t)mem_r16(gp + 0x76a);
+    if (!ids || n <= 0 || n > 1024) return -1;
+    for (int i = 0; i < n; i++) if ((mem_r16(ids + 2u * (uint32_t)i) & 0xfffu) == id) return i;
+    return -1;
+}
+static int golf_voice_idle(void) { int16_t st = (int16_t)mem_r16(cpu.r[28] + 0x758); return st == 0 || st == 9; }
+/* ask the game's voice player for id; 1 = it started */
+static int golf_say(unsigned id) {
+    const int i = golf_table_index(id);
+    if (i < 0 || !golf_voice_idle()) {
+        if (golf_log()) rt_logf("vox golf: say %u refused (table %d, state %d)\n", id, i, (int16_t)mem_r16(cpu.r[28] + 0x758));
+        return 0;
+    }
+    const uint32_t played = mem_r32(cpu.r[28] + 0x778);
+    if (played) mem_w8(played + (uint32_t)i, (uint8_t)(mem_r8(played + (uint32_t)i) & ~1u)); /* may repeat */
+    uint32_t save[32], hi = cpu.hi, lo = cpu.lo;
+    memcpy(save, cpu.r, sizeof save);
+    cpu.r[4] = id;
+    f_8008da4c();
+    memcpy(cpu.r, save, sizeof save);
+    cpu.hi = hi; cpu.lo = lo;
+    if (golf_log()) rt_logf("vox golf: say %u (table %d) state now %d\n", id, i, (int16_t)mem_r16(cpu.r[28] + 0x758));
+    return !golf_voice_idle();
+}
+static void golf_finish(uint32_t player) {           /* the original hole finish, its own voice requests muted */
+    uint32_t save[32], hi = cpu.hi, lo = cpu.lo;
+    memcpy(save, cpu.r, sizeof save);
+    cpu.r[4] = player;
+    golf_mute = 1;
+    f_8007a9d8();
+    golf_mute = 0;
+    memcpy(cpu.r, save, sizeof save);
+    cpu.hi = hi; cpu.lo = lo;
+}
+int rt_hook_8007a9d8(void) {
+    if (golf_mute || !opt.voice_golf) return 0;
+    const uint32_t pl = cpu.r[4];
+    const int idx = golf_idx();
+    if (idx < 0) return 0;
+    const int who = (int16_t)mem_r16(pl + 0x15c), s = mem_r8(pl + 0x1b6 + (uint32_t)idx),
+              p = mem_r8(0x800B7FFCu + (uint32_t)idx);
+    const unsigned id = golf_pick(who, s, p, idx);
+    int ok = 0, wait = 0;
+    if (id && golf_table_index(id) >= 0) {
+        if (golf_voice_idle()) ok = golf_say(id);
+        else wait = 1;                                   /* a line still playing (ball rolling): ours right after it */
+    }
+    if (golf_log()) rt_logf("vox golf: hole %d par %d strokes %d character %d -> line %u%s vbl %u\n", idx + 1, p, s, who,
+                            id, !id ? " (none)" : ok ? " (holding)" : wait ? " (holding, after the line playing)" : " (not started)",
+                            hooks_frame());
+    if (!ok && !wait) return 0;                          /* nothing to say: the game goes on as usual */
+    golf_hold = pl;
+    golf_hold_id = wait ? id : 0;
+    golf_hold_left = 3000;                               /* 10 s safety (longest golf line 5.3 s, + a ball line) */
+    golf_hold_tail = 60;                                 /* 0.2 s after the line before the screen changes */
+    golf_ball_left = -1;
+    return 1;
+}
+/* every gameplay frame (from rt_hook_800818e0, before the level chatter); 1 = skip the chatter this frame */
+static int golf_frame(int32_t dt) {
+    if (dt <= 0 || dt >= 3000) dt = 0;
+    if (golf_hold) {
+        golf_hold_left -= dt;
+        if (golf_hold_id) {                              /* waiting for the line that was playing */
+            if (golf_hold_left > 0 && !golf_voice_idle()) return 1;
+            const unsigned id = golf_hold_id;
+            golf_hold_id = 0;
+            if (golf_hold_left <= 0 || !golf_say(id)) golf_hold_tail = 0;
+            else if (golf_log()) rt_logf("vox golf: line %u after the one playing vbl %u\n", id, hooks_frame());
+        } else if (golf_voice_idle()) golf_hold_tail -= dt;
+        if (golf_hold_tail > 0 && golf_hold_left > 0) return 1;
+        const uint32_t pl = golf_hold;
+        golf_hold = 0;
+        if (golf_log()) rt_logf("vox golf: release%s vbl %u\n", golf_hold_left <= 0 ? " (timeout)" : "", hooks_frame());
+        golf_finish(pl);
+        return 1;
+    }
+    if (golf_ball_left < 0) return 0;
+    if (!opt.voice_golf || golf_idx() < 0) { golf_ball_left = -1; return 0; }
+    golf_ball_left -= dt;
+    if (golf_ball_left > 0) return 0;
+    golf_ball_left = -1;
+    static const uint16_t bt[] = { 270, 82 }, bc[] = { 347 }, ba[] = { 598 }, bl[] = { 949, 995 }, bp[] = { 820, 868 };
+    const int who = (int16_t)mem_r16(0x800E2B48u + 0x15c);
+    const uint16_t *list = who == GT ? bt : who == GC ? bc : who == GA ? ba : who == GL ? bl : who == GP ? bp : NULL;
+    const int n = (who == GT || who == GL || who == GP) ? 2 : list ? 1 : 0;
+    if (!n || !golf_voice_idle()) return 0;
+    const uint32_t played = mem_r32(cpu.r[28] + 0x778);
+    unsigned cand[2]; int nc = 0;
+    for (int pass = 0; pass < 2 && !nc; pass++)          /* unheard first, then any but the last one */
+        for (int k = 0; k < n; k++) {
+            const int i = golf_table_index(list[k]);
+            if (i < 0) continue;
+            if (pass == 0 && played && (mem_r8(played + (uint32_t)i) & 1u)) continue;
+            if (pass == 1 && n > 1 && list[k] == golf_ball_last) continue;
+            cand[nc++] = list[k];
+        }
+    if (!nc) return 0;
+    const unsigned id = cand[golf_rand() % (uint32_t)nc];
+    const int ok = golf_say(id);
+    if (ok) golf_ball_last = id;
+    if (golf_log()) rt_logf("vox golf: ball rolling, character %d -> line %u%s vbl %u\n", who, id, ok ? "" : " (not started)",
+                            hooks_frame());
+    return 0;
+}
+void f_8005fcb8(void);
+int rt_hook_8005fcb8(void) {
+    static int inside;
+    if (inside) return 0;
+    const uint32_t pl = cpu.r[4];
+    const unsigned before = mem_r8(pl + 0x1bf);
+    inside = 1;
+    f_8005fcb8();                                        /* the original */
+    inside = 0;
+    if (opt.voice_golf && golf_idx() >= 0 && !golf_hold && mem_r8(pl + 0x1bf) != before && golf_rand() % 3u == 0) {
+        golf_ball_left = 90;                             /* 0.3 s: the ball is rolling */
+        if (golf_log()) rt_logf("vox golf: swing, ball line armed vbl %u\n", hooks_frame());
+    }
+    return 1;
 }
 
 /* debug: RUGRATS_SFXLOG=1 logs every call of the game's sound-effect wrappers and the libsnd key-on (args, caller) */

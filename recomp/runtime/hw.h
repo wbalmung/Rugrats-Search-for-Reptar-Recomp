@@ -159,6 +159,7 @@ typedef struct {
     int view_ext;        /* Extended View Distance: extra rooms of the low-wall / over-wall rules (hooks.c vd_ok):
                             0 off, 1 short, 2 medium, 3 full (no limit) */
     int voice_hub;       /* 1 = Restored Lines also adds timed chatter in the hub (db 1, hooks.c hub_chatter) */
+    int voice_golf;      /* 1 = Golf Reactions: score / fail / ball-rolling lines on the golf holes (hooks.c golf_*) */
     int voice_restore;   /* 1 = idle chatter also plays voice lines the game never requests (hooks.c), 0 = original */
     int note_fade;       /* 1 = released notes fade over >= ~3 ms (game's instant release rate 0 clicks), 0 = original */
     int rcam_override;   /* 1 = right-stick camera also in levels where it is off by default (hooks.c rcam_excluded) */

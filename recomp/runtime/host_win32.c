@@ -324,7 +324,9 @@ static uint32_t pad_phys(int port) {
     return p;
 }
 
+int hooks_golf_holding(void);
 uint16_t host_pad_buttons(int port) {
+    if (hooks_golf_holding()) return 0xFFFF;     /* Golf Reactions: hole end waits for the line, no input */
     uint16_t b = 0;
     if (port == 0) b |= (uint16_t)test_input();
     if (port == 0 && GetForegroundWindow() == wnd)
@@ -1312,6 +1314,8 @@ static MenuItem menu_items[] = {
       "On: the babies' random lines also include ones the game recorded but never plays (unheard ones first, then they repeat).", T_ENH },
     { "Unused Hub Lines", MI_CHOICE, &opt.voice_hub, v_bool, 2, off_on, NULL, NULL, "audio", "voice_hub", NULL,
       "On: in the house between levels, Tommy now and then says one of his unused lines (needs Restored Lines On).", T_ENH },
+    { "Golf Reactions", MI_CHOICE, &opt.voice_golf, v_bool, 2, off_on, NULL, NULL, "audio", "voice_golf", NULL,
+      "On: mini golf babies react to hole in one, birdie, bogey and over par, and sometimes while the ball rolls. Off: original.", T_ENH },
     { "Reptar Bar Sound", MI_CHOICE, &opt.bar_roar, v_barsnd, 3, barsnd_names, NULL, NULL, "audio", "bar_roar", NULL,
       "The sound when you pick up a Reptar bar: the original chime and roar, the chime alone, or nothing.", T_ENH },
     { "Note Fade-out", MI_CHOICE, &opt.note_fade, v_bool, 2, off_on, NULL, NULL, "audio", "note_fade", NULL,
@@ -2681,6 +2685,7 @@ static void load_config(void) {
     opt.note_fade = GetPrivateProfileIntA("audio", "note_fade", 1, ini) != 0;
     opt.voice_restore = GetPrivateProfileIntA("audio", "voice_restore", 1, ini) != 0;
     opt.voice_hub = GetPrivateProfileIntA("audio", "voice_hub", 1, ini) != 0;
+    opt.voice_golf = GetPrivateProfileIntA("audio", "voice_golf", 1, ini) != 0;
     opt.view_ext = GetPrivateProfileIntA("video", "view_ext", 3, ini);
     if (opt.view_ext < 0 || opt.view_ext > 3) opt.view_ext = 3;
     opt.bar_roar = GetPrivateProfileIntA("audio", "bar_roar", 1, ini);
@@ -2790,6 +2795,7 @@ int main(int argc, char **argv) {
         if ((e = getenv("RUGRATS_NOTEFADE"))) opt.note_fade = atoi(e) != 0;
         if ((e = getenv("RUGRATS_RESTORE"))) opt.voice_restore = atoi(e) != 0;
         if ((e = getenv("RUGRATS_HUBLINES"))) opt.voice_hub = atoi(e) != 0;
+        if ((e = getenv("RUGRATS_GOLFVOX"))) opt.voice_golf = atoi(e) != 0;
         if ((e = getenv("RUGRATS_VIEWEXT"))) opt.view_ext = atoi(e) & 3;
         if ((e = getenv("RUGRATS_BARROAR"))) { opt.bar_roar = atoi(e); if (opt.bar_roar < 0 || opt.bar_roar > 2) opt.bar_roar = 1; }
         if ((e = getenv("RUGRATS_RCAMOVR"))) opt.rcam_override = atoi(e) != 0;
