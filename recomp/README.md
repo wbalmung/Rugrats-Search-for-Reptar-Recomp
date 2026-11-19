@@ -758,7 +758,11 @@ Mysterious Mr. Friend's chatter 80080e08 asks for only while he is after the pla
 (`RS_CHASE`). The Return of Mr. Friend runs with the hub's voice bank, so none of his lines exist there. Incident on
 Aisle 7: during the pie gallery (level word `0x800C56A8` & 8) its chatter 80080330 asks for one of the deli clerks'
 8 lines (list `0x800B92DC`) every 6.7 s; the clerks' 4 restored clips (1073 1080 1083 1084) only stand in for one of
-those, and Tommy's restored lines (103 215 220 221 224 230 231 233) never do (`deli_line`). No More Cookies has chatter (8008046c), so its 20 lines come
+those, and Tommy's restored lines (103 215 220 221 224 230 231 233) never do (`deli_line`). Circus Angelicus: Phil's
+762 plays when the trike lands on the target (the game has no line there): the hit result (`8007db6c`, event 57) is
+held until the line has played (after a ride line still playing; 5 s at most), since the success cinematic takes the
+CD drive at once; the miss result (`8007db90`) is not taken meanwhile. 33 97 141 (copies of No More Cookies' lines)
+and 762 are not used as Circus chatter. No More Cookies has chatter (8008046c), so its 20 lines come
 through the normal swap. Golf holes use
 Ice Cream Mountain's bank (db 8); its 27 restored lines are not mixed into golf chatter, they play at their own
 moment (Golf Reactions below). Debug: `RUGRATS_VOXLOG=1` logs every voice request and each swap.

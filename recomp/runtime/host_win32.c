@@ -1311,7 +1311,7 @@ static MenuItem menu_items[] = {
     { "Chatter Frequency", MI_CHOICE, &opt.chatter, v_chatter, 4, chatter_names, NULL, NULL, "audio", "chatter", NULL,
       "How often the babies say random lines while you play. Cutscenes are not affected.", T_ENH },
     { "Restored Lines", MI_CHOICE, &opt.voice_restore, v_bool, 2, off_on, NULL, NULL, "audio", "voice_restore", NULL,
-      "On: the babies' random lines also include ones the game recorded but never plays (unheard ones first, then they repeat).", T_ENH },
+      "On: lines the game recorded but never plays come back: in random chatter (unheard first, then repeating), the deli clerks in the pie gallery, Phil's trike target landing.", T_ENH },
     { "Unused Hub Lines", MI_CHOICE, &opt.voice_hub, v_bool, 2, off_on, NULL, NULL, "audio", "voice_hub", NULL,
       "On: in the house between levels, Tommy now and then says one of his unused lines (needs Restored Lines On).", T_ENH },
     { "Golf Reactions", MI_CHOICE, &opt.voice_golf, v_bool, 2, off_on, NULL, NULL, "audio", "voice_golf", NULL,

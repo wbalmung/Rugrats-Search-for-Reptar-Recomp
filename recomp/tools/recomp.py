@@ -58,6 +58,8 @@ HOOKS = {
     0x8008da4c: "play XA voice line (a0 = id): Restored Lines swaps idle chatter picks for never-used lines",
     0x8007a9d8: "golf hole finished (a0 = player): Golf Reactions plays the score / fail line first, then runs it",
     0x8005fcb8: "golf stroke counted at ball launch (a0 = player): Golf Reactions arms a ball-rolling line",
+    0x8007db6c: "Circus trike on the target (queues event 57, called every frame): Restored Lines holds it for Phil's line 762",
+    0x8007db90: "Circus trike missed the target (queues event 56): skipped while a hit is held for line 762",
     0x80010e14: "room geometry renderer: GTE depth kind DCLS_ROOM for the hi-res depth check (depthfix)",
     0x80031b84: "world object draw: GTE depth kind DCLS_OBJ (depthfix)",
     0x8003205c: "world object draw (multi-part): GTE depth kind DCLS_OBJ (depthfix)",

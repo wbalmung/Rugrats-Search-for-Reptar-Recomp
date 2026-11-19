@@ -1735,11 +1735,13 @@ int rt_hook_8005be24(void) {
 void hooks_meter_state(StateIO *s);
 static double feather_acc;   /* goose feathers, see rt_hook_8008864c */
 static void golfvox_state(StateIO *s);
+static void circus_state(StateIO *s);
 void hooks_golf_state(StateIO *s) {
     st_prefix(s, "golf");
     ST(s, golf_rem); ST(s, lockaim_rem); ST(s, feather_acc);
     hooks_meter_state(s);
     golfvox_state(s);
+    circus_state(s);
 }
 
 /* ---- power meter speed (Triangle meter, e.g. Angelica's diving board) ------------------------------------
@@ -2781,6 +2783,7 @@ static int chatter_db;     /* the level 800818e0 dispatches on (0x800C5678; -1 =
 static int hub_force;      /* 1 while hub_chatter (timed chatter) asks 8008da4c for a restored line (no 50% gate, no fallback) */
 void f_8008da4c(void);
 static int golf_frame(int32_t dt);   /* Golf Reactions (below) */
+static void circus_frame(int32_t dt); /* Circus target line (below) */
 static int golf_mute;                /* 1 while the held hole finish runs: its own voice requests are skipped */
 /* Timed chatter (part of Restored Lines, user 2026-11-17) for levels with no chatter function (0x800B9618[db] = 0)
    whose restored lines would stay unheard: hub (db 1: 29 159 193 196 200 225, Tommy), Egg Hunt (db 18: 686 687
@@ -2842,6 +2845,7 @@ int rt_hook_800818e0(void) {
         uint32_t who = mem_r32(0x800C5680u);                 /* playing character = player obj+0x15c (8005928c..) */
         if (vlog && who != last_who) rt_logf("vox character %u (db %d) vbl %u\n", who, chatter_db, hooks_frame());
         last_who = who; }
+    circus_frame(dt);                                    /* Circus: 762 waiting for a free voice */
     if (golf_frame(dt)) return 1;                        /* Golf Reactions: holding a hole end -> no chatter */
     inside = 1; chatter_inside = 1;
     f_800818e0();                                        /* the original */
@@ -2924,6 +2928,9 @@ static int deli_line(unsigned id) {
 static int restore_allowed(int db, unsigned id, unsigned requested) {
     if (db >= 23 && db <= 31) return 0;  /* golf holes: all 27 restored DB08 lines have their own trigger (Golf Reactions) */
     if (db == 3) return deli_line(requested) ? (id >= 1073 && id <= 1084) : id < 1073; /* clerks <-> clerks, Tommy <-> Tommy */
+    /* Circus Angelicus: 33 97 141 are leftover copies of No More Cookies' cookie lines (they stay in db 20's chatter);
+       762 plays only on the trike target landing (rt_hook_8007db6c). Angelica's 667 670 671 stay. */
+    if (db == 11 && (id == 33 || id == 97 || id == 141 || id == 762)) return 0;
     for (size_t i = 0; i < sizeof restore_speaker / sizeof restore_speaker[0]; i++)
         if (restore_speaker[i].db == db && restore_speaker[i].id == id) {
             const unsigned who = restore_speaker[i].who;
@@ -3200,6 +3207,67 @@ int rt_hook_8005fcb8(void) {
         if (golf_log()) rt_logf("vox golf: swing, ball line armed vbl %u\n", hooks_frame());
     }
     return 1;
+}
+
+/* ---- Circus Angelicus: Phil's "landed on the target" line 762 (part of Restored Lines, user 2026-11-18) ----------
+   Trike act (stage byte gp+0xd50: 9 ride, 2 landing check 80058998 = surface flags & 3 == 1 under the trike, 3
+   result): on the target (player +248 = object type 812) stage 3 calls 8007db6c EVERY frame, which queues event 57
+   -> 8007dbf4 (player swap to object 600, object 508's callback starts a cinematic from CINEPAKA.BIN, which takes
+   the CD drive at once, event 58 -> diving board, stage 5); miss -> event 56, ride again. The game says nothing
+   there; 762 has no call site, list or trigger (HANDOFF). Here: the first 8007db6c call starts 762 (or waits for a
+   ride line 743 766 804 still playing) and is skipped (circus_hold). While it plays, stage 3 keeps running each
+   frame: both its outcomes are skipped, 8007db6c (hit) and 8007db90 (miss, event 56: the hit must not turn into a
+   miss if the object under the trike changes meanwhile). When the voice is idle again (or after 5 s) we call the
+   original 8007db6c once ourselves (event 57 queued, the game goes on as usual); further calls of either stay
+   skipped until the stage leaves 3 (circus_done). Off with Restored Lines Off. Not in random chatter
+   (restore_allowed, db 11). */
+void f_8007db6c(void);
+static int circus_hold, circus_say, circus_done, circus_inside;  /* holding / 762 still to start / result queued */
+static int32_t circus_left;
+static uint32_t circus_player;
+static void circus_state(StateIO *s) {
+    ST(s, circus_hold); ST(s, circus_say); ST(s, circus_done); ST(s, circus_left); ST(s, circus_player);
+}
+static void circus_frame(int32_t dt) {
+    if (!circus_hold && !circus_done) return;
+    if (mem_r32(0x800C5678u) != 11) { circus_hold = circus_say = circus_done = 0; return; }
+    if (circus_done) { if (mem_r8(0x800C4BD0u) != 3) circus_done = 0; return; }
+    if (dt > 0 && dt < 3000) circus_left -= dt;
+    if (circus_say && golf_voice_idle()) {
+        circus_say = 0;
+        if (golf_say(762)) { if (golf_log()) rt_logf("vox circus: 762 (target, after the ride line) vbl %u\n", hooks_frame()); return; }
+    }
+    if ((!circus_say && golf_voice_idle()) || circus_left <= 0) {
+        if (golf_log()) rt_logf("vox circus: release%s vbl %u\n", circus_left <= 0 ? " (timeout)" : "", hooks_frame());
+        circus_hold = circus_say = 0; circus_done = 1;
+        uint32_t save[32], hi = cpu.hi, lo = cpu.lo;
+        memcpy(save, cpu.r, sizeof save);
+        cpu.r[4] = circus_player;
+        circus_inside = 1;
+        f_8007db6c();                                    /* the original: queues event 57 (success) */
+        circus_inside = 0;
+        memcpy(cpu.r, save, sizeof save);
+        cpu.hi = hi; cpu.lo = lo;
+    }
+}
+int rt_hook_8007db6c(void) {
+    if (circus_inside || !opt.voice_restore || mem_r32(0x800C5678u) != 11) return 0;
+    if (circus_hold || circus_done) return 1;
+    if (golf_table_index(762) < 0) return 0;
+    circus_player = cpu.r[4];
+    circus_hold = 1; circus_left = 1500;                     /* 5 s safety (762 is 1.7 s) */
+    circus_say = 1;
+    if (golf_voice_idle()) {
+        circus_say = 0;
+        if (!golf_say(762)) { circus_hold = 0; return 0; }   /* refused: go on as usual */
+        if (golf_log()) rt_logf("vox circus: 762 (target) vbl %u\n", hooks_frame());
+    } else if (golf_log()) rt_logf("vox circus: 762 waits for the playing line vbl %u\n", hooks_frame());
+    return 1;
+}
+int rt_hook_8007db90(void) {                                 /* trike missed (event 56): not while a hit is held */
+    if (circus_inside || !opt.voice_restore || mem_r32(0x800C5678u) != 11) return 0;
+    if (circus_hold || circus_done) { if (golf_log()) rt_logf("vox circus: miss skipped (hit held)\n"); return 1; }
+    return 0;
 }
 
 /* debug: RUGRATS_SFXLOG=1 logs every call of the game's sound-effect wrappers and the libsnd key-on (args, caller) */

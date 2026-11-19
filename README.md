@@ -14,6 +14,9 @@ What it adds:
   fixes for the original's draw-order glitches.
 - **Play:** quick save/load (F5/F7, 4 slots), native DualSense / DualShock 4 / Xbox pad support, a right-stick
   camera, optional gameplay tweaks (Enhancements page), and an options menu in game (F1).
+- **Audio:** Music / Sound effects / Dialogue volumes, adjustable chatter frequency, and voice lines that are on the
+  disc but never played by the original, put back where they belong (*Restored Lines*: random chatter, the deli
+  clerks in the pie gallery, Phil's line on the circus trike target; *Golf Reactions*: score lines after each hole).
 - **Mods:** RAM-patch mods, disc file replacements and texture packs, with a Mods page in the launcher and in F1
   (see [recomp/MODDING.md](recomp/MODDING.md)).
 

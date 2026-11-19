@@ -198,7 +198,7 @@ SETTINGS = [
     ("Enhancements", "Chatter Frequency", "audio", "chatter", 0, [0, 1, 2, 3], ["Original", "Less often", "Rarely", "Off"],
      "How often the babies say random lines while you play. Cutscenes are not affected."),
     ("Enhancements", "Restored Lines", "audio", "voice_restore", 1, BOOL, OFF_ON,
-     "On: the babies' random lines also include ones the game recorded but never plays (unheard ones first, then they repeat)."),
+     "On: lines the game recorded but never plays come back: in random chatter (unheard first, then repeating), the deli clerks in the pie gallery, Phil's trike target landing."),
     ("Enhancements", "Unused Hub Lines", "audio", "voice_hub", 1, BOOL, OFF_ON,
      "On: in the house between levels, Tommy now and then says one of his unused lines (needs Restored Lines On)."),
     ("Enhancements", "Golf Reactions", "audio", "voice_golf", 1, BOOL, OFF_ON,
