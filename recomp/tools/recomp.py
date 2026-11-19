@@ -87,6 +87,7 @@ HOOKS = {
     0x8007013c: "sound effect wrapper: sfx debug log",
     0x80064a34: "movement collision probe (obj, mode): player probe sees >= 10 ticks (PS1 look-ahead; high fps ledge hop loop)",
     0x80077864: "damage event (a0 = msg: +4 obj, +0x10 other obj, +0x14 amount -> obj+0x1a4): player hit cooldown",
+    0x8004e2ac: "spinning prop timer callback (yaw += obj+0x2c.. x vblanks): kitchen ceiling fan still in Let There Be Light (db 12)",
     0x80056834: "anim update (obj): marks timer-driven characters for in-between smoothing (Chuckie, RUGRATS_AISMOOTH)",
 }
 

@@ -81,6 +81,7 @@ the game itself (code, data, characters, trademarks) belongs to its owners and i
   "nocash" Korth and contributors).
 - [PCSX-Redux](https://github.com/grumpycoders/pcsx-redux) was used as a reference to compare behaviour while
   debugging; none of its code is included.
+- flamespeedy: idea for the still ceiling fan in Let There Be Light.
 
 ## Disclaimer
 

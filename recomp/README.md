@@ -605,6 +605,10 @@ logs every list packet with its layer and each frame's room point count.
 - `RUGRATS_MOVERSMOOTH=0` turns off platform smoothing (default on: elevators and moving platforms, which the game
   moves in fixed 1/30 s steps, glide between those steps at high fps). `RUGRATS_TIMERLOG=1` logs every 1/30 s timer
   callback the game fires (frame, object, callback).
+- The kitchen ceiling fan stands still in Let There Be Light (the power is out in that level; the original kept it
+  turning). Only that level's fan model is stopped; spinning props in every other level are unchanged.
+  `RUGRATS_FANSTILL=0` = old behaviour, `RUGRATS_FANLOG=1` logs every spinning-prop update (level, object, model,
+  speeds, angles).
 - `RUGRATS_AISMOOTH=0` turns off companion smoothing (default on: characters the game updates in a 1/30 s timer, like
   Chuckie following Tommy, get their running animation, position and heading drawn in between those updates at high
   fps; only the picture changes, the game's own state stays exactly as it was). `RUGRATS_AISMOOTHLOG=1` logs each

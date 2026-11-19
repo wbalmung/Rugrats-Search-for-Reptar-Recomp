@@ -3633,3 +3633,29 @@ int rt_hook_8008864c(void) {
     if (skip) { cpu.r[2] = 0; return 1; }
     return 0;
 }
+
+/* ---- Ceiling fan off in Let There Be Light (2026-11-18, user) ------------------------------------------------------
+   The level's story is a power cut, but the kitchen ceiling fan (obj 800eef6c in the user's save, model 94 = obj+0x96)
+   kept turning. It is a generic spinning prop: timer callback 8004e2ac (obj+0x44, 1/30 s) adds the s16 speeds
+   obj+0x2c/+0x2e/+0x30 (0x20 per vblank around y for the fan) x vblanks since the last call (VSync(-1) - obj+0x64) to the
+   angles obj+0x24/+0x26/+0x28. Here, only in db 12 and only for model 94, the speeds are zeroed before the callback
+   runs, so the blades keep their spawn angle. Every other level and every other spinning prop is untouched.
+   RUGRATS_FANSTILL=0 = old behaviour. */
+#define FAN_DB    12
+#define FAN_MODEL 94u
+int rt_hook_8004e2ac(void) {
+    static int on = -1;
+    if (on < 0) { const char *e = getenv("RUGRATS_FANSTILL"); on = !(e && *e == '0'); }
+    const uint32_t obj = cpu.r[4];
+    static int lg = -1;   /* debug: RUGRATS_FANLOG=1 logs each spinner call (db, obj, model, speeds, angles) */
+    if (lg < 0) lg = getenv("RUGRATS_FANLOG") != NULL;
+    if (lg)
+        rt_logf("spin f%u db %d obj %08x model %u speed %d,%d,%d angle %u,%u,%u\n", present_count,
+                (int)mem_r32(0x800C5678u), obj, mem_r16(obj + 0x96), (int16_t)mem_r16(obj + 0x2c),
+                (int16_t)mem_r16(obj + 0x2e), (int16_t)mem_r16(obj + 0x30), mem_r16(obj + 0x24), mem_r16(obj + 0x26),
+                mem_r16(obj + 0x28));
+    if (on && (int32_t)mem_r32(0x800C5678u) == FAN_DB && (obj >> 24) == 0x80u && mem_r16(obj + 0x96) == FAN_MODEL) {
+        mem_w16(obj + 0x2c, 0); mem_w16(obj + 0x2e, 0); mem_w16(obj + 0x30, 0);
+    }
+    return 0;
+}
