@@ -726,6 +726,16 @@ Chatter Frequency (Enhancements page, ini `[audio] chatter`: 0 Original, 1 Less 
 timer `gp+0xe40` in 1/300 s of real time, reset to 6.0..19.6 s, some levels 0..6.8 s). Less often / Rarely stretch
 each new gap x2 / x4, Off keeps the timer from running out. Cutscene and event lines are played from other code.
 
+Restored Lines (Enhancements page, ini `[audio] voice_restore`, default 1 = On; `RUGRATS_RESTORE`): voice lines that
+are on the disc but that the game never requests. Each level's `DATA/DBxx/SPEECHTB.DAT` maps line ids to clips in
+`DATA/SOUND/XA/DBxx.ISF` (every clip on the disc has an entry). 160 ids (177 entries, ~7.6 min) are requested by no
+call site, no id list in the EXE and no level trigger or hint object (`restore_ids[]` in hooks.c). Hook on the voice
+player `8008da4c`: only while the chatter function runs, half of its picks become a restored line that the current
+level's table holds and that has not played yet this visit (played bit 0 of `gp+0x778[index]`), so each one plays
+once per visit; then the game's player runs as usual (skips while a line plays, Dialogue volume). Levels without a
+chatter function (hub, Cookie Race, Return of Mr. Friend, Egg Hunt: 13 entries) keep theirs unheard. Golf holes use
+Ice Cream Mountain's bank (db 8). Debug: `RUGRATS_VOXLOG=1` logs every voice request and each swap.
+
 Level Select (Enhancements page, "Level Select..." row): a list of the 28 playable levels (game database numbers;
 not 0 menus, 8 Ice Cream Mountain, 19 Be Bad, 22 Multiplayer Golf, see "Per-level performance test"). Going there
 (Enter / A / Cross / click) closes the menu and, at the next vblank, sets the level loop's exit variable `0x800C4918`

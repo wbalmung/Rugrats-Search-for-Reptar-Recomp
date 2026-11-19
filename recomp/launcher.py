@@ -197,6 +197,8 @@ SETTINGS = [
      "textures_dump next to the game (GPU renderer). See MODDING.md."),
     ("Enhancements", "Chatter Frequency", "audio", "chatter", 0, [0, 1, 2, 3], ["Original", "Less often", "Rarely", "Off"],
      "How often the babies say random lines while you play. Cutscenes are not affected."),
+    ("Enhancements", "Restored Lines", "audio", "voice_restore", 1, BOOL, OFF_ON,
+     "On: the babies' random lines also include ones the game recorded but never plays (each once per visit)."),
     ("Enhancements", "Reptar Bar Sound", "audio", "bar_roar", 1, [1, 0, 2], ["Chime + roar", "Chime only", "Off"],
      "The sound when you pick up a Reptar bar: the original chime and roar, the chime alone, or nothing."),
     ("Enhancements", "Note Fade-out", "audio", "note_fade", 1, BOOL, OFF_ON,

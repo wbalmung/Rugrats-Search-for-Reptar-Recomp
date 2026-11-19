@@ -55,6 +55,7 @@ HOOKS = {
     0x80050fd0: "portal sparkle spawn: skipped while the label is only being redrawn",
     0x800211e8: "LookAt(eye*, target*, matrix*): right-stick camera orbits the eye (only from 8001e838 via 80029df0)",
     0x800818e0: "per-level idle voice line (chatter) timer, gp+0xe40: chatter option stretches / stops it",
+    0x8008da4c: "play XA voice line (a0 = id): Restored Lines swaps idle chatter picks for never-used lines",
     0x80010e14: "room geometry renderer: GTE depth kind DCLS_ROOM for the hi-res depth check (depthfix)",
     0x80031b84: "world object draw: GTE depth kind DCLS_OBJ (depthfix)",
     0x8003205c: "world object draw (multi-part): GTE depth kind DCLS_OBJ (depthfix)",

@@ -2733,6 +2733,7 @@ int rt_hook_80011a28(void) {
    Every chatter output is gated by that timer, so the option only touches it: after a reset the new gap is scaled
    (x2 / x4); Off keeps it from running out. Cutscene and event lines call 8008da4c from elsewhere: unchanged. */
 void f_800818e0(void);
+static int chatter_inside; /* 1 while the level's chatter function runs (Restored Lines below) */
 int rt_hook_800818e0(void) {
     static int inside;
     if (inside) return 0;
@@ -2745,13 +2746,69 @@ int rt_hook_800818e0(void) {
     }
     t0 = (int32_t)mem_r32(tmr);
     int32_t dt = (int32_t)mem_r32(cpu.r[28] + 156);
-    inside = 1;
+    inside = 1; chatter_inside = 1;
     f_800818e0();                                        /* the original */
-    inside = 0;
+    inside = 0; chatter_inside = 0;
     int32_t t1 = (int32_t)mem_r32(tmr);
     if ((opt.chatter == 1 || opt.chatter == 2) && t1 > t0 - dt && t1 >= 0 && t1 < 0x00100000)
         mem_w32(tmr, (uint32_t)(t1 * (opt.chatter == 1 ? 2 : 4)));
     return 1;
+}
+
+/* Restored Lines (opt.voice_restore). Each level's SPEECHTB.DAT lists its voice clips by id; 160 ids (177 entries,
+   ~7.6 min) are never requested by the game: not by any call site, id list in the EXE (0x800B9220.., 0x800B96C8..),
+   level trigger or hint object (survey 2026-11-17, HANDOFF). Every clip on the disc has an entry, so these are all
+   of them. When the level's chatter function (800818e0 above) asks 8008da4c for a random line, this swaps the id,
+   half the time, for one of those that the CURRENT level's table holds and that has not played yet (byte at
+   gp+0x778 + index, bit 0 = played: ids < 2040 get it when they play. The game itself only blocks a line whose
+   bits are exactly 1; table entries with initial flag 2 (135 of 811) stay repeatable that way, so this tests bit 0
+   alone: each restored line plays once per level visit). The game's own player does the rest (line already playing -> skipped,
+   Dialogue volume). Levels without a chatter function (hub, Cookie Race, Return of Mr. Friend,
+   Egg Hunt: 13 entries) never call it, so their lines stay unheard. Own RNG: the game's rand sequence is untouched. */
+static const uint16_t restore_ids[] = {
+    29, 33, 34, 35, 36, 37, 70, 73, 82, 94, 95, 97, 103, 123, 136, 137, 141, 142, 143, 147, 148, 159, 193, 196,
+    200, 215, 220, 221, 224, 225, 230, 231, 233, 268, 270, 275, 279, 280, 288, 296, 297, 298, 299, 300, 303, 308,
+    310, 315, 336, 337, 338, 347, 360, 397, 398, 404, 407, 470, 517, 524, 528, 537, 552, 553, 581, 586, 587, 588,
+    589, 593, 598, 617, 618, 624, 625, 626, 627, 628, 634, 635, 636, 642, 647, 648, 653, 656, 658, 666, 667, 670,
+    671, 685, 686, 687, 688, 692, 693, 728, 762, 769, 770, 771, 772, 773, 774, 775, 809, 810, 811, 812, 820, 859,
+    868, 897, 898, 899, 900, 901, 904, 920, 930, 939, 949, 980, 981, 983, 984, 986, 995, 1052, 1073, 1080, 1083,
+    1084, 1118, 1123, 1124, 1125, 1126, 1128, 1129, 1130, 1131, 1132, 1133, 1135, 1181, 1182, 1185, 1186, 1187,
+    1188, 1189, 1190, 1191, 1193, 1194, 1211, 1212, 1218,
+};
+static int restore_listed(unsigned id) {
+    int lo = 0, hi = (int)(sizeof restore_ids / sizeof restore_ids[0]) - 1;
+    while (lo <= hi) {
+        int m = (lo + hi) / 2;
+        if (restore_ids[m] == id) return 1;
+        if (restore_ids[m] < id) lo = m + 1; else hi = m - 1;
+    }
+    return 0;
+}
+int rt_hook_8008da4c(void) {
+    static uint32_t rng = 0x2545F491u;
+    static int log = -1;
+    if (log < 0) log = getenv("RUGRATS_VOXLOG") != NULL;
+    const uint32_t gp = cpu.r[28];
+    if (log) rt_logf("vox play %u ra %08x chatter %d state %d vbl %u\n", cpu.r[4], cpu.r[31], chatter_inside,
+                     (int16_t)mem_r16(gp + 0x758), hooks_frame());
+    if (!opt.voice_restore || !chatter_inside) return 0;
+    int16_t st = (int16_t)mem_r16(gp + 0x758);
+    if (st != 0 && st != 9) return 0;                    /* a line is playing: the game skips this request anyway */
+    const uint32_t ids = mem_r32(gp + 0x76c), played = mem_r32(gp + 0x778);
+    const int n = (int16_t)mem_r16(gp + 0x76a);
+    if (!ids || !played || n <= 0 || n > 1024) return 0;
+    rng ^= rng << 13; rng ^= rng >> 17; rng ^= rng << 5;
+    if (rng & 1) return 0;                               /* half the picks stay the game's own */
+    int cand[1024], nc = 0;
+    for (int i = 0; i < n; i++) {
+        unsigned id = mem_r16(ids + 2u * (uint32_t)i) & 0xfffu;
+        if (restore_listed(id) && !(mem_r8(played + (uint32_t)i) & 1u)) cand[nc++] = (int)id; /* bit 0 = played */
+    }
+    if (!nc) return 0;
+    unsigned pick = (unsigned)cand[(rng >> 8) % (uint32_t)nc];
+    if (log) rt_logf("vox restored %u instead of %u\n", pick, cpu.r[4]);
+    cpu.r[4] = pick;
+    return 0;                                            /* the original plays the swapped id */
 }
 
 /* debug: RUGRATS_SFXLOG=1 logs every call of the game's sound-effect wrappers and the libsnd key-on (args, caller) */

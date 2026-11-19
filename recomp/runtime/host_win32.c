@@ -1292,6 +1292,8 @@ static MenuItem menu_items[] = {
       "Spoken lines in play and in-game cutscenes. Movies follow only the master volume.", T_AUDIO },
     { "Chatter Frequency", MI_CHOICE, &opt.chatter, v_chatter, 4, chatter_names, NULL, NULL, "audio", "chatter", NULL,
       "How often the babies say random lines while you play. Cutscenes are not affected.", T_ENH },
+    { "Restored Lines", MI_CHOICE, &opt.voice_restore, v_bool, 2, off_on, NULL, NULL, "audio", "voice_restore", NULL,
+      "On: the babies' random lines also include ones the game recorded but never plays (each once per visit).", T_ENH },
     { "Reptar Bar Sound", MI_CHOICE, &opt.bar_roar, v_barsnd, 3, barsnd_names, NULL, NULL, "audio", "bar_roar", NULL,
       "The sound when you pick up a Reptar bar: the original chime and roar, the chime alone, or nothing.", T_ENH },
     { "Note Fade-out", MI_CHOICE, &opt.note_fade, v_bool, 2, off_on, NULL, NULL, "audio", "note_fade", NULL,
@@ -2592,6 +2594,7 @@ static void load_config(void) {
     opt.chatter = GetPrivateProfileIntA("audio", "chatter", 0, ini);
     if (opt.chatter < 0 || opt.chatter > 3) opt.chatter = 0;
     opt.note_fade = GetPrivateProfileIntA("audio", "note_fade", 1, ini) != 0;
+    opt.voice_restore = GetPrivateProfileIntA("audio", "voice_restore", 1, ini) != 0;
     opt.bar_roar = GetPrivateProfileIntA("audio", "bar_roar", 1, ini);
     if (opt.bar_roar < 0 || opt.bar_roar > 2) opt.bar_roar = 1;
     opt.wall_bonk = GetPrivateProfileIntA("game", "wall_bonk", 1, ini) != 0;
@@ -2697,6 +2700,7 @@ int main(int argc, char **argv) {
         if ((e = getenv("RUGRATS_GOLFAIM"))) opt.golf_aim = atoi(e);
         if ((e = getenv("RUGRATS_CHATTER"))) opt.chatter = atoi(e) & 3;
         if ((e = getenv("RUGRATS_NOTEFADE"))) opt.note_fade = atoi(e) != 0;
+        if ((e = getenv("RUGRATS_RESTORE"))) opt.voice_restore = atoi(e) != 0;
         if ((e = getenv("RUGRATS_BARROAR"))) { opt.bar_roar = atoi(e); if (opt.bar_roar < 0 || opt.bar_roar > 2) opt.bar_roar = 1; }
         if ((e = getenv("RUGRATS_RCAMOVR"))) opt.rcam_override = atoi(e) != 0;
         if ((e = getenv("RUGRATS_WALLBONK"))) opt.wall_bonk = atoi(e) != 0;
