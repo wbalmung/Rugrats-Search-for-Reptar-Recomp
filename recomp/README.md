@@ -61,7 +61,16 @@ How it works (`runtime/hooks.c`):
 - `8001ceb4` (frame pacing) is replaced: one game frame per presented frame.
 - `8001ce48` (time step) is replaced: game time = virtual time that really passed. The game keeps time
   in 1/300 s ticks, so 60/75/100/150/300 fps give perfectly even motion; 120/144/240 alternate tick counts.
-- `8001d3c4`: above 60 fps the buffer flip normally done in the vblank callback is run immediately.
+- Draw and flip (fixed 2026-11-18): the vblank callback `8001d0d8` is a two-step pipeline (`gp+132` bit 1 = the
+  finished frame waits to be drawn, `8001c408` sends its lists; bit 0 = the drawn buffer waits to be shown,
+  `8001c088`/`8001c020`); on a PS1 one call per vblank does "show N-1, draw N". Above 60 fps it used to run partly
+  from the flip-done poll `8001d3c4` (at the end of the NEXT frame) and partly from the real 60 Hz interrupt, so
+  presents alternated 2 flips / 0 flips: only half the frames were ever shown (120 fps = 60 distinct pictures) and
+  every other present drew two frames (the circus slowdown to 80 fps). Now, in high-fps gameplay, the pacing hook
+  runs the callback once at the end of every game frame, before the present, and the interrupt's own calls are
+  skipped: one flip and one frame's drawing per present. Menus / intro / title and 60 fps or less: unchanged.
+  `RUGRATS_FRAMECB=0` = old behaviour. Debug: `RUGRATS_FLIPLOG=1` (flips per present), `RUGRATS_FRAMEPROF=<from>,<to>`
+  (per present: game ms, game frames, projections, polygons, list sends), `RUGRATS_SENDSTACK=<from>,<to>`.
 - `overclock=` gives the virtual PS1 CPU headroom; device timings scale with it, so CD/XA stay real-time.
 
 Measured (test script, gameplay in the house hub): 60, 100, 120, 144, 150, 240 fps all at 100% game speed.
@@ -584,6 +593,9 @@ logs every list packet with its layer and each frame's room point count.
   a `RECOMP_WATCH=1` build logs stores to `RUGRATS_WATCH=<hex address>` during GP0-logged vblanks.
 - `RUGRATS_RES=<1..9>` internal resolution, `RUGRATS_THREADS=<n>` shadow raster threads,
   `RUGRATS_PROF=1` logs per-frame timing (main thread, readout, present, waits on workers) every 300 frames.
+  `RUGRATS_SLOWLOG=<ms>` logs each frame over that long as game / convert / show ms; `RUGRATS_DMATIME=1` the time
+  spent sending draw lists; `RUGRATS_LATENCY=<1..3>` frames DXGI may queue ahead of the display (default 1);
+  `RUGRATS_SAMPLE=<s>` samples the main thread after that delay into `samples.txt` (map with an unstripped link).
 - `RUGRATS_FLIPLOG=1` logs every display flip (vblank, cycles) and every present (real ms, flips so far, vblank,
   cycles): shows how long each game/movie frame stays on screen. `recomp/tools/emuref/movieflips.lua` logs the same
   in PCSX-Redux (vsyncs where the picture changes).

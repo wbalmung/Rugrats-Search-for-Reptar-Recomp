@@ -32,7 +32,33 @@ void hooks_vblank(void) {
 static uint32_t n_drawsync[2], n_cb, n_trans;
 
 int rt_hook_8009c264(void) { n_drawsync[cpu.r[4] ? 1 : 0]++; return 0; }
-int rt_hook_8001d0d8(void) { n_cb++; return 0; }
+/* The vblank callback 8001d0d8 is a two-step pipeline (gp+132): bit 1 = a finished frame waits to be DRAWN
+   (8001c408 sends its lists; then bit 1 -> bit 0), bit 0 = the drawn buffer waits to be SHOWN (8001c088 ->
+   8001c020 PutDispEnv). On the PS1 one call per vblank does "show N-1, draw N". Above 60 fps this ran partly from
+   the early-flip poll (8001d3c4, at the END of the next frame) and partly from the real 60 Hz interrupt, so every
+   other present got two flips and the next none: only half the frames were ever shown, and one present drew two
+   frames (user 2026-11-18: circus drops to 80 fps; 0/2 flips per present in every level since at least 11-07).
+   Now, in high-fps gameplay (cb_hifps), the pacing hook calls the callback once at the end of every game frame
+   (before the present), and the interrupt's own calls are skipped. */
+static int cb_inside;
+static uint32_t pace_present;
+static int cb_hifps(void);
+int rt_hook_8001d0d8(void) {
+    n_cb++;
+    if (!cb_inside && cb_hifps()) return 1;   /* the pacing hook runs it once per frame instead */
+    return 0;
+}
+static void run_frame_cb(void) {
+    Cpu save = cpu;
+    cpu.sr &= ~0x401u;
+    cpu.r[31] = 0;
+    cb_inside = 1;
+    rt_dispatch(0x8001d0d8);
+    cb_inside = 0;
+    uint32_t c = cpu.cycles;
+    cpu = save;
+    cpu.cycles = c;
+}
 int rt_hook_8001c408(void) { n_trans++; return 0; }
 
 static uint32_t n_step, step_hist[10], n_pace, pace_min[4];
@@ -77,18 +103,18 @@ static int menu_loop(void) {
     return m;
 }
 static uint32_t pace_present = 0xFFFFFFF0u;
+/* high-fps gameplay: real-time step, presenting above 60, and the gameplay pacing ran for this or the last present */
+static int cb_hifps(void) {
+    static int on = -1;
+    if (on < 0) { const char *e = getenv("RUGRATS_FRAMECB"); on = e ? atoi(e) != 0 : 1; }   /* 0 = old behaviour */
+    return on && opt.fixed_timestep && PRESENT_FPS > 60 && present_count - pace_present <= 1;
+}
 int rt_hook_8001d3c4(void) {
     if (!opt.fixed_timestep || PRESENT_FPS <= 60) return 0;
     if (present_count - pace_present > 1) return 0;
     uint32_t gp = cpu.r[28];
     if (!(mem_r8(gp + 132) & 2)) return 0;
-    Cpu save = cpu;
-    cpu.sr &= ~0x401u;
-    cpu.r[31] = 0;
-    rt_dispatch(0x8001d0d8);
-    uint32_t c = cpu.cycles;
-    cpu = save;
-    cpu.cycles = c;
+    run_frame_cb();
     return 0; /* now run the original poll, which sees the updated flag */
 }
 
@@ -193,6 +219,9 @@ int rt_hook_8001ceb4(void) {
     if (!opt.fixed_timestep) return 0;
     if (menu_loop() && !getenv("RUGRATS_MENU_FAST")) return 0; /* menus/intro/title: original vblank pacing (60 Hz) */
     pace_present = present_count;
+    /* the frame just finished (8001d00c set its "draw" bit): show the previous one and draw this one now, before
+       this present (see rt_hook_8001d0d8) */
+    if (cb_hifps() && (mem_r8(cpu.r[28] + 132) & 3)) run_frame_cb();
     /* wait for the next presented frame (fast-forward idle virtual time) */
     int guard = 0;
     while (present_count == frame_present && guard++ < 100000) {
