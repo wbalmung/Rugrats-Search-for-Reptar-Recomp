@@ -2734,6 +2734,51 @@ int rt_hook_80011a28(void) {
    (x2 / x4); Off keeps it from running out. Cutscene and event lines call 8008da4c from elsewhere: unchanged. */
 void f_800818e0(void);
 static int chatter_inside; /* 1 while the level's chatter function runs (Restored Lines below) */
+static int chatter_db;     /* the level 800818e0 dispatches on (0x800C5678; -1 = golf hole) */
+static int hub_force;      /* 1 while hub_chatter (timed chatter) asks 8008da4c for a restored line (no 50% gate, no fallback) */
+void f_8008da4c(void);
+/* Timed chatter (part of Restored Lines, user 2026-11-17) for levels with no chatter function (0x800B9618[db] = 0)
+   whose restored lines would stay unheard: hub (db 1: 29 159 193 196 200 225, Tommy), Egg Hunt (db 18: 686 687
+   688); none of them used by those levels' triggers / hint objects (RAM scan of in-level states, 2026-11-17).
+   Not The Return of Mr. Friend (db 14): it runs with the HUB's voice bank loaded (gp+0x77c ISF and the 34-line
+   table = db 1's), its own bank with 1135 never loads; 1135 is also in The Mysterious Mr. Friend's bank (db 9,
+   has chatter; there it only stands in for a chase line, RS_CHASE). After a gap of game time (timed_chatter_gap;
+   gp+156 ticks, 1/300 s, the same clock the level chatter uses; paused / menus don't call 800818e0) this asks the game's voice player for one of them
+   (unheard first, then repeats; see rt_hook_8008da4c). Off with Restored Lines Off or Chatter Frequency Off. A
+   line already playing -> retry in 5 s. The timer re-arms each time such a level is entered. (No More Cookies has
+   a chatter function, 8008046c, so its lines come through the normal swap.) */
+static int timed_chatter_level(int db) { return db == 1 || db == 18; }
+/* Gap until the next timed line: hub 60..120 s (user); Egg Hunt like the game's own level chatter, 1800 +
+   rand(0..255) * 16 ticks = 6.0..19.6 s, x2 / x4 for Chatter Frequency Less / Rare (user, 2026-11-17). */
+static int32_t timed_chatter_gap(uint32_t r) {
+    if (chatter_db == 1) return 18000 + (int32_t)(r % 18001u);
+    int32_t g = 1800 + (int32_t)(r & 0xffu) * 16;
+    return opt.chatter == 1 ? g * 2 : opt.chatter == 2 ? g * 4 : g;
+}
+static void hub_chatter(int32_t dt) {
+    static int32_t left = -1;
+    static int last_db = -2;
+    static uint32_t rng = 0x9E3779B9u;
+    if (chatter_db != last_db) { left = -1; last_db = chatter_db; }
+    if (!timed_chatter_level(chatter_db) || !opt.voice_restore || opt.chatter == 3 || (chatter_db == 1 && !opt.voice_hub)) {
+        left = -1; return;                               /* hub: own switch, Unused Hub Lines (opt.voice_hub) */
+    }
+    rng ^= rng << 13; rng ^= rng >> 17; rng ^= rng << 5;
+    if (left < 0) { left = timed_chatter_gap(rng); return; }
+    if (dt > 0 && dt < 3000) left -= dt;
+    if (left > 0) return;
+    const int16_t st = (int16_t)mem_r16(cpu.r[28] + 0x758);
+    if (st != 0 && st != 9) { left = 1500; return; }     /* a line is playing (cutscene, hint) */
+    uint32_t save[32], hi = cpu.hi, lo = cpu.lo;
+    memcpy(save, cpu.r, sizeof save);
+    cpu.r[4] = 0;                                        /* replaced by the hook; never played as is */
+    chatter_inside = 1; hub_force = 1;
+    f_8008da4c();
+    chatter_inside = 0; hub_force = 0;
+    memcpy(cpu.r, save, sizeof save);
+    cpu.hi = hi; cpu.lo = lo;
+    left = timed_chatter_gap(rng);
+}
 int rt_hook_800818e0(void) {
     static int inside;
     if (inside) return 0;
@@ -2746,12 +2791,19 @@ int rt_hook_800818e0(void) {
     }
     t0 = (int32_t)mem_r32(tmr);
     int32_t dt = (int32_t)mem_r32(cpu.r[28] + 156);
+    chatter_db = mem_r8(0x800C5699u) == 1 ? -1 : (int)mem_r32(0x800C5678u);
+    {   static int vlog = -1; static uint32_t last_who = 0xffffffffu;
+        if (vlog < 0) vlog = getenv("RUGRATS_VOXLOG") != NULL;
+        uint32_t who = mem_r32(0x800C5680u);                 /* playing character = player obj+0x15c (8005928c..) */
+        if (vlog && who != last_who) rt_logf("vox character %u (db %d) vbl %u\n", who, chatter_db, hooks_frame());
+        last_who = who; }
     inside = 1; chatter_inside = 1;
     f_800818e0();                                        /* the original */
     inside = 0; chatter_inside = 0;
     int32_t t1 = (int32_t)mem_r32(tmr);
     if ((opt.chatter == 1 || opt.chatter == 2) && t1 > t0 - dt && t1 >= 0 && t1 < 0x00100000)
         mem_w32(tmr, (uint32_t)(t1 * (opt.chatter == 1 ? 2 : 4)));
+    hub_chatter(dt);
     return 1;
 }
 
@@ -2762,7 +2814,7 @@ int rt_hook_800818e0(void) {
    half the time, for one of those that the CURRENT level's table holds and that has not played yet (byte at
    gp+0x778 + index, bit 0 = played: ids < 2040 get it when they play. The game itself only blocks a line whose
    bits are exactly 1; table entries with initial flag 2 (135 of 811) stay repeatable that way, so this tests bit 0
-   alone: each restored line plays once per level visit). The game's own player does the rest (line already playing -> skipped,
+   alone: unheard restored lines go first; once all have played they repeat, see below). The game's own player does the rest (line already playing -> skipped,
    Dialogue volume). Levels without a chatter function (hub, Cookie Race, Return of Mr. Friend,
    Egg Hunt: 13 entries) never call it, so their lines stay unheard. Own RNG: the game's rand sequence is untouched. */
 static const uint16_t restore_ids[] = {
@@ -2784,6 +2836,46 @@ static int restore_listed(unsigned id) {
     }
     return 0;
 }
+/* Who says a restored line, in levels where the player character changes (sorted by ear, 2026-11-17). who = the
+   playing character, 0x800C5680 (= player object 0x800E2B48 +0x15c, written by the player swaps 800585b0 /
+   8005928c / 80059328; also what 8008df78 adds to 2040 for the baby's own lines): 1 Tommy, 2 Chuckie, 3 Phil,
+   4 Lil (seen on golf hole states: 4 = Lil; 3 = Phil by elimination), 6 Angelica, 9 Reptar. Toy Palace's own
+   chatter (80080a20) branches on it too (1 = Tommy half, 2 = Chuckie half). RS_ANY = plays whoever is playing
+   (Angelica, present but not playable); RS_SKIP = never restore in that level (a copy of a line the game already
+   plays, or a line in the wrong level). Ids not listed for a level play in any part of it. */
+#define RS_ANY 0
+#define RS_SKIP 0xff
+#define RS_CHASE 0xfe   /* only in place of one of the level's enemy chase lines (Mr. Friend, db 9) */
+enum { RS_TOMMY = 1, RS_CHUCKIE = 2, RS_PHIL = 3, RS_LIL = 4 };
+static const struct { uint8_t db; uint8_t who; uint16_t id; } restore_speaker[] = {
+    /* Toy Palace */
+    {6, RS_TOMMY, 94}, {6, RS_TOMMY, 95}, {6, RS_TOMMY, 136},
+    {6, RS_CHUCKIE, 279}, {6, RS_CHUCKIE, 280}, {6, RS_CHUCKIE, 288}, {6, RS_CHUCKIE, 310}, {6, RS_CHUCKIE, 315},
+    {6, RS_CHUCKIE, 398}, {6, RS_CHUCKIE, 470},
+    {6, RS_SKIP, 1135},
+    /* Touchdown Tommy: its chatter (8008046c, shared with No More Cookies) picks from 31 lines of all babies and
+       Angelica whoever is playing, so restored lines do too (user, 2026-11-17). Sorted by ear: Tommy 34-37,
+       Chuckie 298 299 300 303 308, Phil 772-775, Lil 899 900 901 904 920 930, Angelica 685. */
+    {21, RS_SKIP, 360},                                  /* sounds misplaced (user) */
+    /* The Mysterious Mr. Friend: 1135 is the 11th of Mr. Friend's own clips (1135..1146 = ISF offsets 1..8 + 3
+       more). Its chatter 80080e08 speaks only while gp+0xe58 > 0 and one of objects 0x2e / 0x320 / 0x5b (800461f4)
+       has +0x54 set, i.e. while Mr. Friend is after the player, and then picks rand % 10 of 1136..1146 (list
+       0x800B9468); otherwise it asks for id 0. User: 1135 only while that enemy chases, never ambient -> RS_CHASE:
+       swapped in only for a request of one of those 10 lines. (The Return of Mr. Friend, db 14, runs with the hub's
+       voice bank: none of Mr. Friend's lines are loaded there, the game's own included.) */
+    {9, RS_CHASE, 1135},
+};
+static int mrfriend_chase_line(unsigned id) { return id >= 1136 && id <= 1146 && id != 1143; }
+static int restore_allowed(int db, unsigned id, unsigned requested) {
+    for (size_t i = 0; i < sizeof restore_speaker / sizeof restore_speaker[0]; i++)
+        if (restore_speaker[i].db == db && restore_speaker[i].id == id) {
+            const unsigned who = restore_speaker[i].who;
+            if (who == RS_SKIP) return 0;
+            if (who == RS_CHASE) return mrfriend_chase_line(requested);
+            return who == RS_ANY || who == mem_r32(0x800C5680u);
+        }
+    return 1;
+}
 int rt_hook_8008da4c(void) {
     static uint32_t rng = 0x2545F491u;
     static int log = -1;
@@ -2792,21 +2884,41 @@ int rt_hook_8008da4c(void) {
     if (log) rt_logf("vox play %u ra %08x chatter %d state %d vbl %u\n", cpu.r[4], cpu.r[31], chatter_inside,
                      (int16_t)mem_r16(gp + 0x758), hooks_frame());
     if (!opt.voice_restore || !chatter_inside) return 0;
+    const int none = hub_force;                          /* hub chatter: nothing to swap in -> play nothing */
     int16_t st = (int16_t)mem_r16(gp + 0x758);
-    if (st != 0 && st != 9) return 0;                    /* a line is playing: the game skips this request anyway */
+    if (st != 0 && st != 9) return none;                 /* a line is playing: the game skips this request anyway */
     const uint32_t ids = mem_r32(gp + 0x76c), played = mem_r32(gp + 0x778);
     const int n = (int16_t)mem_r16(gp + 0x76a);
-    if (!ids || !played || n <= 0 || n > 1024) return 0;
+    if (!ids || !played || n <= 0 || n > 1024) return none;
     rng ^= rng << 13; rng ^= rng >> 17; rng ^= rng << 5;
-    if (rng & 1) return 0;                               /* half the picks stay the game's own */
-    int cand[1024], nc = 0;
-    for (int i = 0; i < n; i++) {
-        unsigned id = mem_r16(ids + 2u * (uint32_t)i) & 0xfffu;
-        if (restore_listed(id) && !(mem_r8(played + (uint32_t)i) & 1u)) cand[nc++] = (int)id; /* bit 0 = played */
+    if (!hub_force && (rng & 1)) return 0;               /* half the picks stay the game's own */
+    /* fresh = restored lines of this level / part that have not played; when none are left, all of them repeat
+       (repeat = 1): then the played bit of the pick is cleared (the game refuses a line whose flags are exactly 1
+       and sets bit 0 again when it plays), the line just restored is not picked twice in a row, and the swap
+       chance drops to nc / (nc + 8) so a few restored lines don't crowd out the level's own chatter. */
+    static unsigned last_pick;
+    int cand[1024], nc = 0, repeat = 0;
+    for (int pass = 0; pass < 2 && !nc; pass++) {
+        for (int i = 0; i < n; i++) {
+            unsigned id = mem_r16(ids + 2u * (uint32_t)i) & 0xfffu;
+            if (!restore_listed(id) || !restore_allowed(chatter_db, id, cpu.r[4] & 0xfffu)) continue;
+            if (pass == 0 && (mem_r8(played + (uint32_t)i) & 1u)) continue; /* bit 0 = played */
+            cand[nc++] = i;
+        }
+        repeat = pass;
     }
-    if (!nc) return 0;
-    unsigned pick = (unsigned)cand[(rng >> 8) % (uint32_t)nc];
-    if (log) rt_logf("vox restored %u instead of %u\n", pick, cpu.r[4]);
+    if (repeat && nc > 1)                                /* no line twice in a row */
+        for (int k = 0; k < nc; k++)
+            if ((mem_r16(ids + 2u * (uint32_t)cand[k]) & 0xfffu) == last_pick) { cand[k] = cand[--nc]; break; }
+    if (log) rt_logf("vox candidates %d repeat %d (db %d part %u)\n", nc, repeat, chatter_db, mem_r32(0x800C5680u));
+    if (!nc) return none;
+    if (!hub_force && repeat && (rng >> 20) % (uint32_t)(nc + 8) >= (uint32_t)(2 * nc)) return 0; /* 50% x 2nc/(nc+8) */
+    const int pi = cand[(rng >> 8) % (uint32_t)nc];
+    unsigned pick = mem_r16(ids + 2u * (uint32_t)pi) & 0xfffu;
+    if (repeat) mem_w8(played + (uint32_t)pi, (uint8_t)(mem_r8(played + (uint32_t)pi) & ~1u));
+    last_pick = pick;
+    if (log) rt_logf("vox restored %u instead of %u%s (db %d part %u)\n", pick, cpu.r[4], repeat ? " (repeat)" : "",
+                     chatter_db, mem_r32(0x800C5680u));
     cpu.r[4] = pick;
     return 0;                                            /* the original plays the swapped id */
 }

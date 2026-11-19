@@ -731,9 +731,26 @@ are on the disc but that the game never requests. Each level's `DATA/DBxx/SPEECH
 `DATA/SOUND/XA/DBxx.ISF` (every clip on the disc has an entry). 160 ids (177 entries, ~7.6 min) are requested by no
 call site, no id list in the EXE and no level trigger or hint object (`restore_ids[]` in hooks.c). Hook on the voice
 player `8008da4c`: only while the chatter function runs, half of its picks become a restored line that the current
-level's table holds and that has not played yet this visit (played bit 0 of `gp+0x778[index]`), so each one plays
-once per visit; then the game's player runs as usual (skips while a line plays, Dialogue volume). Levels without a
-chatter function (hub, Cookie Race, Return of Mr. Friend, Egg Hunt: 13 entries) keep theirs unheard. Golf holes use
+level's table holds and that has not played yet this visit (played bit 0 of `gp+0x778[index]`). Once all of them
+have played they repeat: the hook clears the pick's played bit (the game refuses a line whose flags are exactly 1),
+never picks the same line twice in a row, and swaps less often (nc / (nc + 8) of picks for nc lines). Then the
+game's player runs as usual (skips while a line plays, Dialogue volume). Where the playable baby changes inside a
+level, `restore_speaker[]` (sorted by ear) keeps each line to the baby being played: `0x800C5680` = player object
+`+0x15c`, 1 Tommy, 2 Chuckie, 3 Phil, 4 Lil (6 Angelica, 9 Reptar). Toy Palace (db 6): Tommy half / Chuckie half,
+6/1135 left out (a copy of a line the game plays). Touchdown Tommy (db 21): its own chatter mixes all babies
+whoever is playing, so its restored lines do too; only 360 is left out (misplaced). `RS_ANY` = a line for any
+baby in a level that otherwise sorts by speaker. The level comes
+from `0x800C5678` as 800818e0 reads it. `RUGRATS_VOXLOG=1` also logs each change of the playing character. Levels without a
+chatter function have none of their own. Restored Lines adds a timed one (`hub_chatter` in hooks.c) to the hub
+(db 1, its 6 Tommy lines) and Egg Hunt (db 18: 686 687 688): after a gap of game time it plays one of that
+level's restored lines (unheard first, then repeats; no other line). Gap: hub 60..120 s; Egg Hunt the game's own
+level chatter gap, 6.0..19.6 s (x2 / x4 with Chatter Frequency Less / Rare). Off with Restored Lines Off or Chatter
+Frequency Off; the hub's also with Unused Hub Lines Off (Enhancements page, ini `[audio] voice_hub`, default 1 = On;
+`RUGRATS_HUBLINES`); a line already playing delays it 5 s. Still unheard: Cookie Race (687 688, no chatter). 1135 is one
+of Mr. Friend's own clips (1135..1146): it only stands in for one of his chase lines (1136..1146, which The
+Mysterious Mr. Friend's chatter 80080e08 asks for only while he is after the player), never as ambient chatter
+(`RS_CHASE`). The Return of Mr. Friend runs with the hub's voice bank, so none of his lines exist there. No More Cookies has chatter (8008046c), so its 20 lines come
+through the normal swap. Golf holes use
 Ice Cream Mountain's bank (db 8). Debug: `RUGRATS_VOXLOG=1` logs every voice request and each swap.
 
 Level Select (Enhancements page, "Level Select..." row): a list of the 28 playable levels (game database numbers;
