@@ -156,6 +156,8 @@ typedef struct {
     int rcam_invert;     /* 1 = stick up looks down */
     int chatter;         /* idle voice lines: 0 original, 1 less often (2x gap), 2 rarely (4x), 3 off */
     int bar_roar;        /* Reptar bar pickup sound 0x1c: 1 chime + roar (original), 0 chime only, 2 none */
+    int view_ext;        /* Extended View Distance: extra rooms of the low-wall / over-wall rules (hooks.c vd_ok):
+                            0 off, 1 short, 2 medium, 3 full (no limit) */
     int voice_hub;       /* 1 = Restored Lines also adds timed chatter in the hub (db 1, hooks.c hub_chatter) */
     int voice_restore;   /* 1 = idle chatter also plays voice lines the game never requests (hooks.c), 0 = original */
     int note_fade;       /* 1 = released notes fade over >= ~3 ms (game's instant release rate 0 clicks), 0 = original */

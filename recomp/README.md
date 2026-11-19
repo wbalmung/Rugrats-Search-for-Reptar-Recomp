@@ -521,6 +521,12 @@ logs every list packet with its layer and each frame's room point count.
   answers a frame late; unknown = visible, 30 frames visible after the last visible answer) and skips the hidden
   ones: `RUGRATS_OCCL=0` = off, `RUGRATS_OCCLCHUNK=0` / `RUGRATS_OCCLOBJ=0` = only that kind off,
   `RUGRATS_OCCLSYNC=1` = wait for each answer (repeatable tests), `RUGRATS_OCCLLOG=1`.
+  **Extended View Distance** (F1 Enhancements, ini `[video] view_ext`, `RUGRATS_VIEWEXT`): 3 Full (default, no
+  limit), 2 Medium, 1 Short, 0 Off. The low-wall and over-wall rules only bring in or widen a room whose box lies
+  within 12000 (Medium) / 6000 (Short) units of the camera eye; Off = no extra rooms (the game's own culling).
+  The game's own room passes are never changed. Fewer extra rooms = fewer polygons; the far side then can be
+  missing again (sky / gap colour over far hedges, far Reptar 2010 streets). `RUGRATS_VIEWDIST=<units>` overrides
+  the distance (0 = no limit), `RUGRATS_VIEWDISTLOG=1` logs rooms left out.
   `RUGRATS_PORTALLOG=1` logs each test (with the frame number);
   `RUGRATS_WSX=<num>,<den>` changes the widescreen squeeze (debug: `1,2` makes leftover 4:3 culling obvious).
   `RUGRATS_WSIR=0` = hardware x clamp in widescreen (by default, points more than 32767 units to the side are

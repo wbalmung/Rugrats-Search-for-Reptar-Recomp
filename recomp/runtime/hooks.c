@@ -555,6 +555,42 @@ static int occl_hidden(int nb) {
     if (lg && h) rt_logf("f%u room %d hidden (occlusion)\n", present_count, nb);
     return h;
 }
+/* Extended View Distance (2026-11-17, F1 Enhancements, opt.view_ext; user: the extra rooms the low-wall / over-wall
+   rules bring in cost raw polygons in the maze and Reptar 2010). Those rules only force or widen a room whose box
+   (room +0x10 min / +0x20 max, world words) lies within vd_lim of the eye (cam+20); the game's own passes and rects
+   are never touched. 0 = Off (no extra rooms at all), 1 Short, 2 Medium, 3 Full (no limit = before this option).
+   RUGRATS_VIEWDIST=<units> overrides the distance (debug; 0 = no limit). */
+static double vd_lim2;            /* squared limit, < 0 = none */
+static int32_t vd_eye[3];
+static int vd_lg = -1;
+static void vd_frame(uint32_t cam) {
+    static const double lim[4] = { 0, 6000, 12000, -1 };   /* Off, Short, Medium, Full */
+    static double env = -2;
+    if (env == -2) { const char *e = getenv("RUGRATS_VIEWDIST"); env = e ? atof(e) : -1; }
+    if (vd_lg < 0) vd_lg = getenv("RUGRATS_VIEWDISTLOG") != NULL;
+    const int v = opt.view_ext < 0 ? 0 : opt.view_ext > 3 ? 3 : opt.view_ext;
+    const double l = env >= 0 && v ? (env > 0 ? env : -1) : lim[v];
+    vd_lim2 = l < 0 ? -1 : l * l;
+    for (int a = 0; a < 3; a++) vd_eye[a] = (int32_t)mem_r32(cam + 20 + 4 * a);
+}
+static double vd_dist2(int rm) {
+    const uint32_t room = mem_r32(0x800C4A8Cu) + (uint32_t)rm * 0x70;
+    double d2 = 0;
+    for (int a = 0; a < 3; a++) {
+        const double e = vd_eye[a], mn = (int32_t)mem_r32(room + 16 + 4 * a), mx = (int32_t)mem_r32(room + 32 + 4 * a);
+        const double d = e < mn ? mn - e : e > mx ? e - mx : 0;
+        d2 += d * d;
+    }
+    return d2;
+}
+/* 1 = an extra room may be brought in (within the Extended View Distance) */
+static int vd_ok(int rm) {
+    if (opt.view_ext <= 0) return 0;
+    if (vd_lim2 < 0 || rm < 0) return 1;
+    const double d2 = vd_dist2(rm);
+    if (vd_lg && d2 > vd_lim2) rt_logf("f%u room %d beyond view distance (%.0f)\n", present_count, rm, sqrt(d2));
+    return d2 <= vd_lim2;
+}
 enum { LW_SEEN_MAX = 48 };
 static int lw_room_seen(uint32_t cur, int nb, int from, uint32_t rect, int ahead) {
     const uint32_t tbl = mem_r32(0x800C4A8Cu);
@@ -565,6 +601,7 @@ static int lw_room_seen(uint32_t cur, int nb, int from, uint32_t rect, int ahead
     q[nq] = nb; d[nq++] = 0;
     for (int h = 1; h < nq; h++) {
         const int rm = q[h];
+        if (!vd_ok(rm)) continue;   /* past the Extended View Distance: not drawn, not looked past */
         if (ow_room_on_screen(cur, rm, rect)) {   /* on screen and not known to be hidden behind nearer walls */
             occl_box(cur, rm);
             if (!occl_hidden(rm)) return 1;
@@ -612,6 +649,8 @@ int rt_hook_80033278(void) {
     f_80033278();
     portal_in = 0;
     if (use) { mem_w16(r, s0); mem_w16(r + 2, s1); mem_w16(r + 4, s2); mem_w16(r + 6, s3); }
+    vd_frame(mem_r32(cpu.r[29] + 124));
+    const int vd_nb = (int16_t)mem_r16(portal + 14), vd_in = vd_ok(vd_nb);   /* Extended View Distance */
     /* Eye outside the camera room (2026-11-12, space station elevator, db 3x): the scripted elevator camera hangs
        ~3000 units beside the shaft and looks at it through the shaft's back-face-culled wall, so the room above is
        NOT seen only through the shaft-top portal; its projected rect (a thin band) culled the upper shaft walls and
@@ -685,7 +724,8 @@ int rt_hook_80033278(void) {
                 if (backface == 2 || (backface && hooks_backface_level())) gte_backface_frame = present_count;
                 ow_over_frame = present_count;
                 int pass = cpu.r[2] != 0;
-                if (!pass && ow_n < OVERWALL_MAX) {
+                if (!vd_in) pass = 0;   /* past the Extended View Distance: the game's own result and rect stay */
+                else if (!pass && ow_n < OVERWALL_MAX) {
                     double hd2 = 0; /* horizontal distance from the eye to the portal's box (room-local x/z) */
                     for (int a = 0; a < 3; a += 2) {
                         int mn = 0x7fffffff, mx = -0x7fffffff;
@@ -755,8 +795,8 @@ int rt_hook_80033278(void) {
            Reptar 2010 went from 18 to 36 rooms a frame (the widened rects let the game pass more rooms on its own)
            and broke for good (lines, then noise textures). */
         int16_t bx[4];
-        if (lowwall && pkt_rooms_ok() && r != out && (int16_t)s2 > 0 && (int16_t)s3 > 0 && lw_pass < (uint32_t)box_cap &&
-            !hooks_gap_level() && hooks_backface_level()) {
+        if (lowwall && vd_in && pkt_rooms_ok() && r != out && (int16_t)s2 > 0 && (int16_t)s3 > 0 &&
+            lw_pass < (uint32_t)box_cap && !hooks_gap_level() && hooks_backface_level()) {
             const uint32_t cur = mem_r32(0x800C4A8Cu) + cpu.r[18] * 0x70;
             /* Hold (2026-11-14, user: polygons flicking along the street): a room whose box just touches the edge of
                the parent rect (1 px wide) was in one frame and out the next as the camera turned, so it and the rooms
@@ -797,8 +837,8 @@ int rt_hook_80033278(void) {
                 mem_w16(out, (uint32_t)x0); mem_w16(out + 2, (uint32_t)y0);
                 mem_w16(out + 4, (uint32_t)(x1 - x0)); mem_w16(out + 6, (uint32_t)(y1 - y0));
             }
-        } else if (lowwall && pkt_rooms_ok() && r != out && (int16_t)s2 > 0 && (int16_t)s3 > 0 && lw_pass < LOWWALL_PASSES &&
-            hooks_gap_level()) {
+        } else if (lowwall && vd_in && pkt_rooms_ok() && r != out && (int16_t)s2 > 0 && (int16_t)s3 > 0 &&
+            lw_pass < LOWWALL_PASSES && hooks_gap_level()) {
             /* a failing doorway (off screen, e.g. behind the camera's side) still passes when its room's box is on
                screen: that room shows over the hedge (user's second save: room 49 left of the camera room) */
             const uint32_t cur = mem_r32(0x800C4A8Cu) + cpu.r[18] * 0x70;

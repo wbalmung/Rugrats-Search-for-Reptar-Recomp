@@ -1208,6 +1208,7 @@ static const char *const rcam_inv_names[] = { "Normal", "Inverted" };
 static const int v_rcam[] = { 0, 1, 2 };
 static const char *const chatter_names[] = { "Original", "Less often", "Rarely", "Off" };
 static const int v_chatter[] = { 0, 1, 2, 3 };
+static const char *const viewext_names[] = { "Off", "Short", "Medium", "Full" };
 static const char *const barsnd_names[] = { "Chime + roar", "Chime only", "Off" };
 static const char *const dither_names[] = { "Original", "Off", "Off + full colour" };
 static const int v_dither[] = { 1, 0, 2 };   /* ini values: 1 original, 0 off, 2 off + full colour */
@@ -1315,6 +1316,9 @@ static MenuItem menu_items[] = {
       "The sound when you pick up a Reptar bar: the original chime and roar, the chime alone, or nothing.", T_ENH },
     { "Note Fade-out", MI_CHOICE, &opt.note_fade, v_bool, 2, off_on, NULL, NULL, "audio", "note_fade", NULL,
       "On: music notes the game cuts off instantly fade out over a few milliseconds instead (removes the clicks).", T_ENH },
+    { "Extended View Distance", MI_CHOICE, &opt.view_ext, v_chatter, 4, viewext_names, NULL, NULL, "video", "view_ext", NULL,
+      "Hedge maze and Reptar 2010: how far rooms seen over walls are drawn. Lower = fewer polygons, faster; "
+      "far parts can then be missing. Off: original.", T_ENH },
     { "Override Camera", MI_CHOICE, &opt.rcam_override, v_bool, 2, off_on, NULL, NULL, "input", "rcam_override", NULL,
       "On: the right-stick camera also works in levels where it is normally off (Touchdown Tommy).", T_ENH },
     { "Wall Bonk", MI_CHOICE, &opt.wall_bonk, v_bool, 2, off_on, NULL, NULL, "game", "wall_bonk", NULL,
@@ -2677,6 +2681,8 @@ static void load_config(void) {
     opt.note_fade = GetPrivateProfileIntA("audio", "note_fade", 1, ini) != 0;
     opt.voice_restore = GetPrivateProfileIntA("audio", "voice_restore", 1, ini) != 0;
     opt.voice_hub = GetPrivateProfileIntA("audio", "voice_hub", 1, ini) != 0;
+    opt.view_ext = GetPrivateProfileIntA("video", "view_ext", 3, ini);
+    if (opt.view_ext < 0 || opt.view_ext > 3) opt.view_ext = 3;
     opt.bar_roar = GetPrivateProfileIntA("audio", "bar_roar", 1, ini);
     if (opt.bar_roar < 0 || opt.bar_roar > 2) opt.bar_roar = 1;
     opt.wall_bonk = GetPrivateProfileIntA("game", "wall_bonk", 1, ini) != 0;
@@ -2784,6 +2790,7 @@ int main(int argc, char **argv) {
         if ((e = getenv("RUGRATS_NOTEFADE"))) opt.note_fade = atoi(e) != 0;
         if ((e = getenv("RUGRATS_RESTORE"))) opt.voice_restore = atoi(e) != 0;
         if ((e = getenv("RUGRATS_HUBLINES"))) opt.voice_hub = atoi(e) != 0;
+        if ((e = getenv("RUGRATS_VIEWEXT"))) opt.view_ext = atoi(e) & 3;
         if ((e = getenv("RUGRATS_BARROAR"))) { opt.bar_roar = atoi(e); if (opt.bar_roar < 0 || opt.bar_roar > 2) opt.bar_roar = 1; }
         if ((e = getenv("RUGRATS_RCAMOVR"))) opt.rcam_override = atoi(e) != 0;
         if ((e = getenv("RUGRATS_WALLBONK"))) opt.wall_bonk = atoi(e) != 0;
