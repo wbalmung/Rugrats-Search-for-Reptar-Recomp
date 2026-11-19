@@ -102,7 +102,7 @@ void state_safe_point(void);
    a real-time run at the user's settings (9x, 150 fps, a step forward) it jumped to 271 KB about 80 s in and broke.
    Bigger ring: guest RAM is 8 MB here (cpu.h; the PS1's 2 MB + an extension the game never uses), and at every
    pacing call (frame start, after any state load) the ring is pointed at 0x80200000.. +RUGRATS_BIGRING KB (default
-   2048, 0 = the game's own 280 KB ring). Save states hold the first 2 MB only; the ring is rebuilt every frame.
+   2048, 0 = the game's own 280 KB ring). Save states also hold the ring (cpu.ram_ext, hw.c): the frame after a load re-sends the previous frame's lists.
    Safety limits per frame, scaled to the ring (frame start = the pacing call):
    - back faces (gte.c NCLIP flips) only while the frame has used < RUGRATS_PKTBUDGET KB (big ring 1280, own 128);
    - the extra-room rules (over-wall, low walls) pause for 2 s (120 vblanks) after a frame that used
@@ -165,7 +165,13 @@ static void pkt_frame_start(void) {
     pkt_ring_place();
     pkt_start = mem_r32(0x800DE3B0u);
 }
+uint32_t hooks_pkt_ring_bytes(void) { return pkt_ring_kb() * 1024u; }   /* saved as cpu.ram_ext (hw.c) */
 int rt_hook_8001ceb4(void) {
+    {   /* old-build state loaded: the resume call takes 2 -> 1 (that frame's stale list sends are skipped, hw.c),
+           the next frame 1 -> 0 */
+        extern int dma2_stale;
+        if (dma2_stale) dma2_stale--;
+    }
     pkt_frame_start();
     state_safe_point(); /* quick save / load requests run here: start of a frame, known guest call chain */
     pkt_ring_place(); pkt_start = mem_r32(0x800DE3B0u);   /* a state just loaded may hold the game's own ring */

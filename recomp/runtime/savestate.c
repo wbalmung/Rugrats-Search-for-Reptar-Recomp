@@ -143,6 +143,21 @@ void st_field(StateIO *s, const char *name, void *p, size_t n) {
     }
 }
 
+/* loading: 1 if the file holds field <current prefix>.<name> (e.g. to handle states from older builds) */
+int st_has(StateIO *s, const char *name) {
+    char key[160];
+    int kl = snprintf(key, sizeof key, "%s.%s", s->prefix, name);
+    if (kl >= (int)sizeof key) kl = sizeof key - 1;
+    if (!s->loading) return 1;
+    uint32_t h = hashs(key, (size_t)kl) & (uint32_t)(s->hsize - 1);
+    for (;;) {
+        int i = s->hash[h];
+        if (i < 0) return 0;
+        if (s->recs[i].nlen == kl && memcmp(s->recs[i].name, key, (size_t)kl) == 0) return 1;
+        h = (h + 1) & (uint32_t)(s->hsize - 1);
+    }
+}
+
 static void all_devices(StateIO *s) {
     hw_state(s);      /* CPU, RAM, scheduler, IRQ, DMA, timers */
     gte_state(s);

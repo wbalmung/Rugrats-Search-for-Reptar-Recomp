@@ -15,6 +15,7 @@ typedef struct StateIO StateIO;
 void st_prefix(StateIO *s, const char *prefix);
 void st_field(StateIO *s, const char *name, void *p, size_t n);
 int st_loading(StateIO *s);
+int st_has(StateIO *s, const char *name);   /* loading: the file holds <prefix>.<name> */
 #define ST(s, x) st_field((s), #x, &(x), sizeof(x))
 #define ST_N(s, name, p, n) st_field((s), (name), (p), (n))
 

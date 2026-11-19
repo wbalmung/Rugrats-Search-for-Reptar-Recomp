@@ -249,13 +249,20 @@ static int layerlog_on(void) {
     extern int frame_no;
     return a && frame_no >= a && frame_no <= b;
 }
+/* > 0: list sends are stale (state from an older build loaded, hw_state); counted down by the pacing hook */
+int dma2_stale;
+uint32_t hooks_pkt_ring_bytes(void);
 static void dma_run(int ch) {
     uint32_t chcr = dma_chcr[ch];
     uint32_t addr = dma_madr[ch] & 0x7FFFFC;
     int to_ram = !(chcr & 1);
     int step = (chcr & 2) ? -4 : 4;
     int mode = (chcr >> 9) & 3;
-    if (mode == 2 && ch == 2) {
+    if (mode == 2 && ch == 2 && dma2_stale) {
+        static int lg;
+        if (lg++ < 20) rt_logf("dma2: stale list from %06x skipped (state without the packet ring)\n", addr);
+        dma_madr[ch] = 0xFFFFFF;
+    } else if (mode == 2 && ch == 2) {
         /* linked list to GPU */
         int guard = 0;
         { extern int gpu_cmdlog; if (gpu_cmdlog) rt_logf("dma2 list from %06x (ra %08x)\n", addr, cpu.r[31]); }
@@ -561,7 +568,17 @@ void hw_state(StateIO *s) {
     st_prefix(s, "cpu");
     ST(s, cpu.r); ST(s, cpu.hi); ST(s, cpu.lo); ST(s, cpu.cycles); ST(s, cpu.next_event);
     ST(s, cpu.sr); ST(s, cpu.cause); ST(s, cpu.epc);
-    ST_N(s, "ram", ram, 0x200000);   /* the PS1 2 MB only (the extension holds per-frame packets) */
+    ST_N(s, "ram", ram, 0x200000);   /* the PS1 2 MB */
+    /* The draw packet ring in the extension (hooks.c, 0x80200000..): right after a load the game sends the lists
+       of the frame before the save again, and they link into ring packets, so the ring is saved too (user
+       2026-11-18: screen turned to lines after loading; "DMA2 list loop" after every load). States from older
+       builds have no ram_ext: then the first frame's list sends are skipped (dma2_stale), the restored VRAM
+       already shows that frame. */
+    {
+        const uint32_t ext = hooks_pkt_ring_bytes();
+        if (st_loading(s)) dma2_stale = ext && !st_has(s, "ram_ext") ? 2 : 0;   /* 2: see rt_hook_8001ceb4 */
+        if (ext) ST_N(s, "ram_ext", ram + 0x200000, ext);
+    }
     ST_N(s, "scratch", scratch, sizeof scratch);
     ST(s, cache_isolated);
     st_prefix(s, "hw");

@@ -500,8 +500,11 @@ logs every list packet with its layer and each frame's room point count.
   Draw packet ring (all levels): the game builds a frame's packets and ordering table in one ring with no overflow
   check (its own: 280 KB at 0x80193E50; next-free pointer 0x800DE3B0, +4 start, +8 end). A frame past the ring
   corrupts its own list ("DMA2 list loop" in the log, then a crash; Reptar 2010 with the extras reached 272 KB).
-  Guest RAM is 8 MB here (the PS1's 2 MB + an extension the game never touches; save states and exports still hold
-  the first 2 MB only) and at every frame start the ring is moved to 0x80200000, `RUGRATS_BIGRING` KB long (default
+  Guest RAM is 8 MB here (the PS1's 2 MB + an extension the game never touches; exports hold the first 2 MB only,
+  save states since 2026-11-18 also the ring, field `cpu.ram_ext`, because right after a load the game re-sends the
+  previous frame's lists and they link into the ring; for older states without it those first-frame sends are
+  skipped, `dma2_stale` in hw.c; before this fix every load drew one frame from stale ring memory, "DMA2 list loop",
+  sometimes a screen full of lines) and at every frame start the ring is moved to 0x80200000, `RUGRATS_BIGRING` KB long (default
   2048; 0 = the game's own ring). Safety limits, scaled to the ring: back faces only while the frame is under
   `RUGRATS_PKTBUDGET` KB (1280; own ring 128), the extra-room rules pause 2 s after a frame over `RUGRATS_PKTROOMS`
   KB (1536; 200), past `RUGRATS_PKTHARD` KB (1792; 250) further room/object faces are dropped (0 = off).
