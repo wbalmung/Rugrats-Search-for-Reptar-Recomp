@@ -207,7 +207,7 @@ SETTINGS = [
      "The sound when you pick up a Reptar bar: the original chime and roar, the chime alone, or nothing."),
     ("Enhancements", "Note Fade-out", "audio", "note_fade", 1, BOOL, OFF_ON,
      "On: music notes the game cuts off instantly fade out over a few milliseconds instead (removes the clicks)."),
-    ("Enhancements", "Extended View Distance", "video", "view_ext", 3, [0, 1, 2, 3], ["Off", "Short", "Medium", "Full"],
+    ("Enhancements", "Extended View Distance", "video", "view_ext", 1, [0, 1, 2, 3], ["Off", "Short", "Medium", "Full"],
      "Hedge maze and Reptar 2010: how far rooms seen over walls are drawn. Lower = fewer polygons, faster; far parts can then be missing. Off: original."),
     ("Enhancements", "Override Camera", "input", "rcam_override", 0, BOOL, OFF_ON,
      "On: the right-stick camera also works in levels where it is normally off (Touchdown Tommy)."),
