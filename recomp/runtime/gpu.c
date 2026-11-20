@@ -3462,6 +3462,7 @@ static void xfer_pixel_in(uint16_t p) {
         g.xcx = 0;
         if (++g.xcy >= g.xh) {
             g.xfer = 0;
+            { void night_upload(int, int, int, int); night_upload(g.xx, g.xy, g.xw, g.xh); }   /* hooks.c: "Let There Be Light" Fixes (furniture) */
             { void tex_upload(int, int, int, int); tex_upload(g.xx, g.xy, g.xw, g.xh); }   /* texpack.c */
             if (hw_s) { /* the uploaded native pixels go to the hi-res target as s x s blocks */
                 hw_mark(g.xy, g.xy + g.xh - 1);
@@ -3469,6 +3470,31 @@ static void xfer_pixel_in(uint16_t p) {
             }
         }
     }
+}
+
+/* "Let There Be Light" Fixes, furniture part (hooks.c): read / rewrite one native VRAM pixel. gpu_px_put is only for the moment an upload has just
+   been written (night_upload, before the upload's own hi-res / GPU marking); it also updates the CPU shadow. */
+uint16_t gpu_px_get(int x, int y) { return vram[(y & 511) * 1024 + (x & 1023)]; }
+void gpu_px_put(int x, int y, uint16_t p) {
+    x &= 1023; y &= 511;
+    vram[y * 1024 + x] = p;
+    if (hr.buf) {
+        int s = hr.s;
+        for (int j = 0; j < s; j++)
+            for (int i = 0; i < s; i++) hr.buf[(size_t)(y * s + j) * hr.w + x * s + i] = p;
+    }
+}
+/* Write a w x h block of native pixels outside any upload, with the same syncing and marking as a CPU->VRAM upload
+   (used when the "Let There Be Light" Fixes option is switched in the F1 menu). */
+void gpu_vram_patch(int x, int y, int w, int h, const uint16_t *px) {
+    gpu_hr_sync();
+    if (hw_s) hw_guard(x, y, x + w - 1, y + h - 1);
+    nl_set(x, y, x + w - 1, y + h - 1, 0);
+    late_touch(x, y, x + w - 1, y + h - 1);
+    for (int j = 0; j < h; j++)
+        for (int i = 0; i < w; i++) gpu_px_put(x + i, y + j, px[j * w + i]);
+    { void tex_upload(int, int, int, int); tex_upload(x, y, w, h); }
+    if (hw_s) { hw_mark(y, y + h - 1); hw_area(x, y, w, h, HWF_BLIT, 0); }
 }
 
 static uint16_t xfer_pixel_out(void) {

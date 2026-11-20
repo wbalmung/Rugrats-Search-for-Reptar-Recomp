@@ -1330,9 +1330,9 @@ static MenuItem menu_items[] = {
     { "Walk After Shooting", MI_CHOICE, &opt.shot_walk, v_bool, 2, shotwalk_names, NULL, NULL, "game", "shot_walk", NULL,
       "Fixed: after firing while walking (Angelica's laser), the walk animation goes back to normal speed. "
       "Original: it keeps playing at double speed until you stop.", T_ENH },
-    { "Ceiling Fan", MI_CHOICE, &opt.fan_still, v_bool, 2, shotwalk_names, NULL, NULL, "game", "fan_still", NULL,
-      "Fixed: in Let There Be Light the power is out, so the kitchen ceiling fan stands still. "
-      "Original: it keeps spinning. Other levels are not affected.", T_ENH },
+    { "\"Let There Be Light\" Fixes", MI_CHOICE, &opt.light_fixes, v_bool, 2, shotwalk_names, NULL, NULL, "game", "light_fixes", NULL,
+      "Fixed: the power is out, so the kitchen ceiling fan stands still and various objects that kept their daytime "
+      "colours get night colours. Original: as on the disc.", T_ENH },
     { "Final Level Behavior", MI_CHOICE, &opt.final_level, v_bool, 2, finallevel_names, NULL, NULL, "game", "final_level", NULL,
       "Enhanced: after the last puzzle piece you stay in the level; the TV in the house (Triangle) starts Reptar 2010. "
       "Default: straight on to the final level.", T_ENH },
@@ -2717,7 +2717,9 @@ static void load_config(void) {
     if (opt.bar_roar < 0 || opt.bar_roar > 2) opt.bar_roar = 1;
     opt.wall_bonk = GetPrivateProfileIntA("game", "wall_bonk", 1, ini) != 0;
     opt.shot_walk = GetPrivateProfileIntA("game", "shot_walk", 1, ini) != 0;
-    opt.fan_still = GetPrivateProfileIntA("game", "fan_still", 1, ini) != 0;
+    /* "Let There Be Light" Fixes; an ini from before the merge (2026-11-19) may only have the old Ceiling Fan key */
+    opt.light_fixes = GetPrivateProfileIntA("game", "light_fixes", GetPrivateProfileIntA("game", "fan_still", 1, ini), ini) != 0;
+    opt.fan_still = opt.night_furn = 1;
     opt.final_level = GetPrivateProfileIntA("game", "final_level", 1, ini) != 0;
     opt.rcam_override = GetPrivateProfileIntA("input", "rcam_override", 0, ini) != 0;
     bind_load(ini);
@@ -2827,7 +2829,9 @@ int main(int argc, char **argv) {
         if ((e = getenv("RUGRATS_RCAMOVR"))) opt.rcam_override = atoi(e) != 0;
         if ((e = getenv("RUGRATS_WALLBONK"))) opt.wall_bonk = atoi(e) != 0;
         if ((e = getenv("RUGRATS_SHOTWALK"))) opt.shot_walk = atoi(e) != 0;
-        if ((e = getenv("RUGRATS_FANSTILL"))) opt.fan_still = atoi(e) != 0;
+        if ((e = getenv("RUGRATS_LIGHTFIXES"))) opt.light_fixes = atoi(e) != 0;
+        if ((e = getenv("RUGRATS_FANSTILL"))) opt.fan_still = atoi(e) != 0;     /* debug: one part alone */
+        if ((e = getenv("RUGRATS_NIGHTFURN"))) opt.night_furn = atoi(e) != 0;
         if ((e = getenv("RUGRATS_FINALLEVEL"))) opt.final_level = atoi(e) != 0;
         if ((e = getenv("RUGRATS_VOLS"))) sscanf(e, "%d,%d,%d", &opt.vol_music, &opt.vol_sfx, &opt.vol_voice); /* music,sfx,dialogue */
         if ((e = getenv("RUGRATS_SKIPINTRO"))) opt.skip_intro = atoi(e) != 0;

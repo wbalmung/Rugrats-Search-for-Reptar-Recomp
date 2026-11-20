@@ -1130,6 +1130,8 @@ void hooks_state(StateIO *s) {
     hooks_golf_state(s);
     void hooks_timer_state(StateIO *s);
     hooks_timer_state(s);
+    void hooks_night_state(StateIO *s);
+    hooks_night_state(s);
     if (st_loading(s)) { void hooks_dmg_reset(void); hooks_dmg_reset(); }
 }
 
@@ -2318,6 +2320,7 @@ int rt_hook_80072d38(void) {
 }
 int rt_hook_80072bf0(void) {
     if (!lbl_inside) tv_frame();      /* TV to Final Level: once per game frame, before the timers fire */
+    if (!lbl_inside) { void hooks_night_frame(void); hooks_night_frame(); }   /* "Let There Be Light" Fixes (furniture) */
     if (lbl_inside || !opt.fixed_timestep) return 0;
     lbl_inside = 1;
     lbl_nfired = 0;
@@ -2618,6 +2621,7 @@ static void near_begin(uint32_t obj) {
 }
 int rt_hook_80031b84(void) {
     static int in;
+    if (!in) { void hooks_night_obj(uint32_t obj); hooks_night_obj(cpu.r[4]); }   /* "Let There Be Light" Fixes */
     const int r = obj_draw(f_80031b84, &in, DCLS_OBJ);
     if (r) { near_pass = 0; near_hide = 0; near_slot = -1; }
     return r;
@@ -2668,7 +2672,11 @@ void f_800102dc(void);
 void f_80010174(void);
 int rt_hook_800102dc(void) { static int in; if (in || !(near_pass || pair_model)) return 0; near_face(f_800102dc, &in, 4); return 1; }
 int rt_hook_80010174(void) { static int in; if (in || !(near_pass || pair_model)) return 0; near_face(f_80010174, &in, 3); return 1; }
-int rt_hook_8003205c(void) { static int in; return obj_draw(f_8003205c, &in, DCLS_OBJ); }
+int rt_hook_8003205c(void) {
+    static int in;
+    if (!in) { void hooks_night_obj(uint32_t obj); hooks_night_obj(cpu.r[4]); }   /* "Let There Be Light" Fixes */
+    return obj_draw(f_8003205c, &in, DCLS_OBJ);
+}
 /* Object near cull in widescreen (2026-11-14, user: kitchen counter cabinet popping at the left screen edge while
    turning the stick camera right). The object draw 80031b84 gets the object's camera-space centre z from 8001eb4c
    (ra 80031c3c) and skips the object when z < H (projection distance, 315 here) unless obj+0 bit 0x800 is set; only
@@ -3640,7 +3648,8 @@ int rt_hook_8008864c(void) {
    obj+0x2c/+0x2e/+0x30 (0x20 per vblank around y for the fan) x vblanks since the last call (VSync(-1) - obj+0x64) to the
    angles obj+0x24/+0x26/+0x28. Here, only in db 12 and only for model 94, the speeds are zeroed before the callback
    runs, so the blades keep their spawn angle. Every other level and every other spinning prop is untouched.
-   F1 Enhancements "Ceiling Fan" (opt.fan_still, ini [game] fan_still, RUGRATS_FANSTILL): switched back to Original
+   Part of F1 Enhancements '"Let There Be Light" Fixes' (opt.light_fixes, ini [game] light_fixes, RUGRATS_LIGHTFIXES;
+   this part alone: debug RUGRATS_FANSTILL=0). Switched back to Original
    while the level runs, the fan gets its speed back (the game's value seen before zeroing; 32 around y if this run
    never saw it, e.g. after loading a state saved with the fan stopped). */
 #define FAN_DB    12
@@ -3657,7 +3666,7 @@ int rt_hook_8004e2ac(void) {
                 mem_r16(obj + 0x28));
     if ((int32_t)mem_r32(0x800C5678u) == FAN_DB && (obj >> 24) == 0x80u && mem_r16(obj + 0x96) == FAN_MODEL) {
         const int moving = mem_r16(obj + 0x2c) | mem_r16(obj + 0x2e) | mem_r16(obj + 0x30);
-        if (opt.fan_still) {
+        if (opt.light_fixes && opt.fan_still) {
             if (moving)
                 for (int i = 0; i < 3; i++) spd[i] = (int16_t)mem_r16(obj + 0x2c + 2 * i);
             mem_w16(obj + 0x2c, 0); mem_w16(obj + 0x2e, 0); mem_w16(obj + 0x30, 0);
@@ -3667,3 +3676,295 @@ int rt_hook_8004e2ac(void) {
     }
     return 0;
 }
+
+
+/* ---- Night Furniture (2026-11-18, user) -------------------------------------------------------------------------
+   Let There Be Light (db 12) gets its night look from dark palettes (CLUTs) in its own texture file (DB12A.RAW); room
+   and prop polygons are drawn at neutral colour 0x808080. Some kitchen furniture textures kept daytime palettes on the
+   disc (checked: VRAM == disc bytes, the game never darkens anything at run time; same on a PS1), so they glow next to
+   the room. Part of '"Let There Be Light" Fixes' (opt.light_fixes; this part alone: debug RUGRATS_NIGHTFURN=0): the listed 16-colour CLUTs are darkened in VRAM while db 12 runs.
+   - night_frame() (once per game frame, timer-pass hook): wanted = option && db 12. A listed CLUT not yet darkened gets
+     its current VRAM colours saved (night_orig) and the darkened ones written (gpu_vram_patch = same syncing / hi-res /
+     GPU marking as an upload); option switched off in db 12 -> the saved colours go back. Leaving db 12 only forgets
+     the flags (the next level's uploads own VRAM then).
+   - night_upload() (gpu.c, after every CPU->VRAM upload): an upload over a listed CLUT holds fresh disc colours ->
+     flag cleared, darkened again by the next night_frame.
+   - Save states hold the flags + saved colours ("hooks.night_*"); a state without them (older build) has untouched
+     VRAM -> flags cleared on load.
+   Debug: RUGRATS_NIGHTCLUT=<hex clut>[:<hex source clut>],... replaces the list, RUGRATS_NIGHTDBG=1 paints listed CLUTs red,
+   RUGRATS_NIGHTLOG=1 logs uploads / applies. */
+uint16_t gpu_px_get(int x, int y);
+void gpu_px_put(int x, int y, uint16_t p);
+void gpu_vram_patch(int x, int y, int w, int h, const uint16_t *px);
+#define NIGHT_MAX 48
+/* db 12's daytime-coloured kitchen furniture: {CLUT word (x/16 | y<<6), source CLUT word or 0}. With a source, the
+   CLUT gets that CLUT's colours copied from VRAM (an identical-looking night version of the same texture elsewhere in the
+   kitchen: same texel indices, checked); without one it is scaled by night_px(). Found by painting candidates red
+   (RUGRATS_NIGHTDBG): 57dc centre drawer front <- 701d (the drawers above / below it and the drawer units on the far
+   wall); 575c orange cabinet doors <- 6fdd (the counter doors); 579c stove front, 53dc fridge doors, 531d / 729c
+   fridge side edges are scaled. Left alone on purpose: Tommy's flashlight (6b1d, 6add), Tommy's face (7fac), the SPIKE
+   bowl (6b5d..7f9c group), the wall band (4cdd), HUD and pickups. The range hood is untextured (vertex colours). */
+static const uint16_t night_default[][2] = {
+    { 0x57dc, 0x701d }, { 0x575c, 0x6fdd }, { 0x579c, 0 }, { 0x53dc, 0 }, { 0x531d, 0 }, { 0x729c, 0 },
+    { 0x6edd, 0 },   /* light teal door panel (room texture, lit by vertex colours) */
+    { 0x6d1d, 0 },   /* Tommy's nightstand (model 944, textured only) */
+    { 0x551d, 0 }, { 0x6d5d, 0 }, { 0x6d9d, 0 }, { 0x6ddd, 0 },   /* Reptar doll textures (model 1130) */
+};
+static uint16_t night_list[NIGHT_MAX], night_src[NIGHT_MAX];
+static int night_n = -1, night_dbg, night_log, night_lastdb = -1;
+static uint8_t night_dark[NIGHT_MAX];               /* 1 = this CLUT in VRAM holds our darkened colours */
+static uint16_t night_orig[NIGHT_MAX][16];           /* its colours before darkening */
+static void night_init(void) {
+    if (night_n >= 0) return;
+    night_n = 0;
+    night_dbg = getenv("RUGRATS_NIGHTDBG") != NULL;
+    night_log = getenv("RUGRATS_NIGHTLOG") != NULL;
+    const char *e = getenv("RUGRATS_NIGHTCLUT");
+    if (!e) {
+        for (size_t i = 0; i < sizeof night_default / sizeof night_default[0] && night_n < NIGHT_MAX; i++)
+            { night_list[night_n] = night_default[i][0]; night_src[night_n++] = night_default[i][1]; }
+        return;
+    }
+    while (*e && night_n < NIGHT_MAX) {
+        char *end; unsigned long v = strtoul(e, &end, 16), src = 0;   /* <clut>[:<source clut>],... */
+        if (end == e) break;
+        if (*end == ':') { e = end + 1; src = strtoul(e, &end, 16); }
+        night_src[night_n] = (uint16_t)src;
+        night_list[night_n++] = (uint16_t)v;
+        e = *end ? end + 1 : end;
+    }
+}
+static uint16_t night_px(uint16_t c) {
+    if (!(c & 0x7fff)) return c;                        /* 0 = transparent (and black + STP): keep */
+    if (night_dbg) return (uint16_t)((c & 0x8000) | 31);
+    const int r = c & 31, g = (c >> 5) & 31, b = (c >> 10) & 31;
+    int nr = (r * 30 + 50) / 100, ng = (g * 30 + 50) / 100, nb = (b * 45 + 50) / 100;
+    if (!(nr | ng | nb)) nb = 1;                         /* never turn an opaque colour into transparent 0 */
+    return (uint16_t)((c & 0x8000) | nr | ng << 5 | nb << 10);
+}
+static void night_clut_xy(int k, int *x, int *y) { *x = (night_list[k] & 0x3f) * 16; *y = (night_list[k] >> 6) & 0x1ff; }
+void night_upload(int x, int y, int w, int h) {
+    night_init();
+    if (night_log && w * h >= 256) rt_logf("night: upload db %d rect %d,%d %dx%d\n", (int)mem_r32(0x800C5678u), x, y, w, h);
+    for (int k = 0; k < night_n; k++) {
+        int cx, cy; night_clut_xy(k, &cx, &cy);
+        if (night_dark[k] && cy >= y && cy < y + h && cx + 16 > x && cx < x + w) night_dark[k] = 0;
+    }
+}
+/* Untextured props get their colours from the model, not a CLUT. Model header +0x10 = vertex count | colour count
+   << 16, +0x18 = colour table (4 bytes each: R, G, B, code; gouraud faces 0x30 / 0x38 index it), +0x1c = face groups
+   (word type | count << 16, 0xff ends): flat faces 0x20 (tri) / 0x28 (quad) are 12 bytes with their own colour word
+   at +8 (R, G, B, code); textured faces (0x24 / 0x2c / 0x34 / 0x3c, 24 bytes) carry 0x808080 and are left alone.
+   night_model_tab[]: model id + which colours to darken (NMF_TABLE = the colour table, NMF_FLAT = flat face colours).
+   night_obj() (object draw hooks 80031b84 / 8003205c, a0 = object, model id obj+0x96, model obj+0x88) collects the
+   colour word addresses of a listed model the first time it is drawn in db 12 and applies the option at once;
+   night_models() runs in night_frame. Words that do not hold what we last wrote are fresh game data (level (re)load)
+   -> saved and darkened again; Original writes the saved colours back if the words still hold ours. */
+#define NMF_TABLE 1
+#define NMF_FLAT  2
+static const struct { uint16_t id; uint8_t flags; } night_model_tab[] = {
+    { 81, NMF_TABLE },              /* bathroom trash can (teal, 2 table colours) */
+    { 950, NMF_FLAT },              /* potted plant: pot + soil (flat faces; leaves textured, stem greens left) */
+    { 951, NMF_FLAT },              /* potted plant, blue-grey pot + soil */
+    { 527, NMF_TABLE | NMF_FLAT },  /* door knob (yellow) */
+    { 949, NMF_FLAT },              /* potted plant, pink pot: pot, soil, flat leaves (stem table left) */
+    { 132, NMF_FLAT },              /* coffee table (blue; used more than once in the house) */
+    { 961, NMF_TABLE | NMF_FLAT },  /* garage cardboard box (olive) */
+    { 962, NMF_TABLE | NMF_FLAT },  /* garage cardboard box, other shape */
+    { 1271, NMF_FLAT },             /* stair handrail post (grey) */
+    { 1130, NMF_TABLE | NMF_FLAT }, /* green Reptar doll on Tommy's nightstand */
+    { 1092, NMF_FLAT },             /* Tommy's bed: sheets (flat blue / teal) */
+    { 383, NMF_FLAT },              /* toy chest: its only flat faces are the purple toy on top */
+    { 388, NMF_TABLE | NMF_FLAT },  /* small green lamp on the dresser */
+    { 94, NMF_TABLE | NMF_FLAT },   /* kitchen ceiling fan: underside (orange light cover, grey) */
+};
+#define NM_N (sizeof night_model_tab / sizeof night_model_tab[0])
+/* NM_MAX / NM_COLS are part of the save-state layout ("hooks.nm3_*", rows matched by model id): never change them,
+   add new fields instead. Rows past NM_N stay empty. */
+#define NM_MAX 32
+#define NM_COLS 128
+static uint32_t nm_ptr[NM_MAX], nm_addr[NM_MAX][NM_COLS], nm_orig[NM_MAX][NM_COLS], nm_wrote[NM_MAX][NM_COLS];
+static uint8_t nm_n[NM_MAX], nm_dark[NM_MAX];
+static uint32_t night_col(uint32_t c) {                /* bytes R, G, B, code: same tone as night_px */
+    const uint32_t r = c & 0xff, g = (c >> 8) & 0xff, b = (c >> 16) & 0xff;
+    return (c & 0xff000000u) | ((r * 30 + 50) / 100) | ((g * 30 + 50) / 100) << 8 | ((b * 45 + 50) / 100) << 16;
+}
+static unsigned night_collect(uint32_t m, unsigned flags, uint32_t *addr) {   /* colour word addresses, 0 = none */
+    unsigned n = 0;
+    if (flags & NMF_TABLE) {
+        const uint32_t tab = mem_r32(m + 0x18), cnt = mem_r32(m + 0x10) >> 16;
+        if ((tab >> 24) == 0x80u)
+            for (uint32_t i = 0; i < cnt && n < NM_COLS; i++) addr[n++] = tab + 4 * i;
+    }
+    if (flags & NMF_FLAT) {
+        uint32_t a = mem_r32(m + 0x1c);
+        for (int g = 0; g < 32 && (a >> 24) == 0x80u; g++) {
+            const uint32_t t = mem_r32(a), typ = t & 0xff, cnt = t >> 16;
+            unsigned size;
+            switch (typ) {
+            case 0x20: case 0x28: case 0x30: case 0x38: size = 12; break;
+            case 0x24: case 0x2c: case 0x34: case 0x3c: size = 24; break;
+            default: size = 0;                                /* 0xff = end, anything else: stop */
+            }
+            if (!size || cnt > 1000) break;
+            if (typ == 0x20 || typ == 0x28)
+                for (uint32_t i = 0; i < cnt && n < NM_COLS; i++) addr[n++] = a + 4 + i * size + 8;
+            a += 4 + cnt * size;
+        }
+    }
+    return n;
+}
+static void night_model(unsigned k) {
+    if (!nm_n[k]) return;
+    if (!nm_addr[k][0]) {                 /* from an old state without addresses: collect them again */
+        uint32_t a[NM_COLS];
+        const unsigned n = night_collect(nm_ptr[k], night_model_tab[k].flags, a);
+        if (n < nm_n[k]) nm_n[k] = (uint8_t)n;
+        memcpy(nm_addr[k], a, sizeof a);
+        if (!nm_addr[k][0]) { nm_n[k] = 0; return; }
+    }
+    const int want = opt.light_fixes && opt.night_furn;
+    int ours = 1;
+    for (unsigned i = 0; i < nm_n[k]; i++) if (mem_r32(nm_addr[k][i]) != nm_wrote[k][i]) ours = 0;
+    if (want && (!ours || !nm_dark[k])) {
+        for (unsigned i = 0; i < nm_n[k]; i++) {
+            if (!ours) nm_orig[k][i] = mem_r32(nm_addr[k][i]);
+            nm_wrote[k][i] = night_dbg ? (nm_orig[k][i] & 0xff000000u) | 0xffu : night_col(nm_orig[k][i]);
+            mem_w32(nm_addr[k][i], nm_wrote[k][i]);
+        }
+        nm_dark[k] = 1;
+        if (night_log) rt_logf("night: f%u model %u colours %u dark\n", present_count, night_model_tab[k].id, nm_n[k]);
+    } else if (!want && nm_dark[k]) {
+        if (ours)
+            for (unsigned i = 0; i < nm_n[k]; i++) mem_w32(nm_addr[k][i], nm_orig[k][i]);
+        nm_dark[k] = 0;
+        if (night_log) rt_logf("night: f%u model %u %s\n", present_count, night_model_tab[k].id, ours ? "restored" : "reloaded");
+    }
+}
+static void night_models(void) { for (unsigned k = 0; k < NM_N; k++) if (nm_ptr[k]) night_model(k); }
+void hooks_night_obj(uint32_t obj) {
+    if ((obj >> 24) != 0x80u || (int)mem_r32(0x800C5678u) != 12) return;
+    const uint32_t id = mem_r16(obj + 0x96);
+    for (unsigned k = 0; k < NM_N; k++) {
+        if (id != night_model_tab[k].id) continue;
+        const uint32_t m = mem_r32(obj + 0x88);
+        if ((m >> 24) != 0x80u) return;
+        if (m != nm_ptr[k]) {
+            nm_ptr[k] = m; nm_dark[k] = 0;
+            nm_n[k] = (uint8_t)night_collect(m, night_model_tab[k].flags, nm_addr[k]);
+            memset(nm_wrote[k], 0, sizeof nm_wrote[k]);
+        }
+        night_init();
+        night_model(k);
+        return;
+    }
+}
+static void night_frame(void) {
+    night_init();
+    const int db = (int)mem_r32(0x800C5678u);
+    if (db != night_lastdb) {                             /* level change: VRAM belongs to the new level */
+        if (night_lastdb == 12) { memset(night_dark, 0, sizeof night_dark); memset(nm_ptr, 0, sizeof nm_ptr); }
+        night_lastdb = db;
+    }
+    if (db != 12) return;
+    night_models();
+    const int want = opt.light_fixes && opt.night_furn;
+    for (int k = 0; k < night_n; k++) {
+        if (want == night_dark[k]) continue;
+        int cx, cy; night_clut_xy(k, &cx, &cy);
+        uint16_t px[16];
+        if (want) {
+            const int sx = (night_src[k] & 0x3f) * 16, sy = (night_src[k] >> 6) & 0x1ff;
+            for (int i = 0; i < 16; i++) {
+                night_orig[k][i] = gpu_px_get(cx + i, cy);
+                px[i] = night_src[k] && !night_dbg ? gpu_px_get(sx + i, sy) : night_px(night_orig[k][i]);
+            }
+        } else {
+            memcpy(px, night_orig[k], sizeof px);
+        }
+        gpu_vram_patch(cx, cy, 16, 1, px);
+        night_dark[k] = (uint8_t)want;
+        if (night_log) rt_logf("night: f%u clut %04x (%d,%d) %s\n", present_count, night_list[k], cx, cy, want ? "dark" : "restored");
+    }
+}
+/* one model row from a loaded state -> the row of night_model_tab with that id (addr NULL = collect again later) */
+static void nm_take(uint16_t id, uint32_t ptr, const uint32_t *addr, const uint32_t *orig, const uint32_t *wrote,
+                    unsigned n, unsigned dark) {
+    if (!ptr || !n) return;
+    for (unsigned k = 0; k < NM_N; k++) {
+        if (night_model_tab[k].id != id) continue;
+        if (n > NM_COLS) n = NM_COLS;
+        nm_ptr[k] = ptr; nm_n[k] = (uint8_t)n; nm_dark[k] = (uint8_t)dark;
+        memset(nm_addr[k], 0, sizeof nm_addr[k]);
+        if (addr) memcpy(nm_addr[k], addr, 4 * n);
+        memcpy(nm_orig[k], orig, 4 * n); memcpy(nm_wrote[k], wrote, 4 * n);
+        return;
+    }
+}
+void hooks_night_state(StateIO *s) {
+    night_init();
+    /* CLUT part: rows follow night_list; "night_ids" (since 2026-11-19) lets a load match them by CLUT word */
+    static uint16_t ids[NIGHT_MAX];
+    static uint8_t dk[NIGHT_MAX];
+    static uint16_t og[NIGHT_MAX][16];
+    if (!st_loading(s)) {
+        memset(ids, 0, sizeof ids);
+        memcpy(ids, night_list, sizeof night_list);
+        st_field(s, "night_ids", ids, sizeof ids);
+        ST(s, night_dark); ST(s, night_orig); ST(s, night_lastdb);
+    } else if (!st_has(s, "night_dark")) {               /* older state: VRAM as the game left it */
+        memset(night_dark, 0, sizeof night_dark);
+        night_lastdb = -1;
+    } else if (!st_has(s, "night_ids")) {                /* first builds: same list order as now (only appended) */
+        ST(s, night_dark); ST(s, night_orig); ST(s, night_lastdb);
+    } else {
+        memset(ids, 0, sizeof ids); memset(dk, 0, sizeof dk);
+        st_field(s, "night_ids", ids, sizeof ids);
+        st_field(s, "night_dark", dk, sizeof dk);
+        st_field(s, "night_orig", og, sizeof og);
+        ST(s, night_lastdb);
+        memset(night_dark, 0, sizeof night_dark);
+        for (int j = 0; j < NIGHT_MAX; j++)
+            for (int k = 0; ids[j] && k < night_n; k++)
+                if (night_list[k] == ids[j]) { night_dark[k] = dk[j]; memcpy(night_orig[k], og[j], sizeof og[j]); }
+    }
+    /* model part */
+    static uint16_t mid[NM_MAX];
+    if (!st_loading(s)) {
+        memset(mid, 0, sizeof mid);
+        for (unsigned k = 0; k < NM_N; k++) mid[k] = night_model_tab[k].id;
+        st_field(s, "nm3_ids", mid, sizeof mid);
+        st_field(s, "nm3_ptr", nm_ptr, sizeof nm_ptr); st_field(s, "nm3_addr", nm_addr, sizeof nm_addr);
+        st_field(s, "nm3_orig", nm_orig, sizeof nm_orig); st_field(s, "nm3_wrote", nm_wrote, sizeof nm_wrote);
+        st_field(s, "nm3_n", nm_n, sizeof nm_n); st_field(s, "nm3_dark", nm_dark, sizeof nm_dark);
+        return;
+    }
+    memset(nm_ptr, 0, sizeof nm_ptr); memset(nm_n, 0, sizeof nm_n); memset(nm_dark, 0, sizeof nm_dark);
+    memset(nm_addr, 0, sizeof nm_addr); memset(nm_wrote, 0, sizeof nm_wrote);
+    static uint32_t p[NM_MAX], a[NM_MAX][NM_COLS], o[NM_MAX][NM_COLS], w[NM_MAX][NM_COLS];
+    static uint8_t n[NM_MAX], d[NM_MAX];
+    memset(p, 0, sizeof p); memset(n, 0, sizeof n); memset(d, 0, sizeof d);
+    if (st_has(s, "nm3_ids")) {
+        memset(mid, 0, sizeof mid);
+        st_field(s, "nm3_ids", mid, sizeof mid); st_field(s, "nm3_ptr", p, sizeof p);
+        st_field(s, "nm3_addr", a, sizeof a); st_field(s, "nm3_orig", o, sizeof o); st_field(s, "nm3_wrote", w, sizeof w);
+        st_field(s, "nm3_n", n, sizeof n); st_field(s, "nm3_dark", d, sizeof d);
+        for (unsigned j = 0; j < NM_MAX; j++) nm_take(mid[j], p[j], a[j], o[j], w[j], n[j], d[j]);
+    } else if (st_has(s, "nm_addr")) {                   /* test builds 2026-11-19 (2): models 81 950 951 527, 64 */
+        static const uint16_t id2[4] = { 81, 950, 951, 527 };
+        uint32_t p2[4], (*a2)[64] = (uint32_t (*)[64])a, (*o2)[64] = (uint32_t (*)[64])o, (*w2)[64] = (uint32_t (*)[64])w;
+        uint8_t n2[4], d2[4];
+        memset(p2, 0, sizeof p2); memset(n2, 0, sizeof n2); memset(d2, 0, sizeof d2);
+        st_field(s, "nm_ptr", p2, sizeof p2); st_field(s, "nm_addr", a2, 4 * 64 * 4);
+        st_field(s, "nm_orig", o2, 4 * 64 * 4); st_field(s, "nm_wrote", w2, 4 * 64 * 4);
+        st_field(s, "nm_n", n2, sizeof n2); st_field(s, "nm_dark", d2, sizeof d2);
+        for (unsigned j = 0; j < 4; j++) nm_take(id2[j], p2[j], a2[j], o2[j], w2[j], n2[j], d2[j]);
+    } else if (st_has(s, "nm_ptr")) {                    /* test build 2026-11-19 (1): model 81 only, 8 colours */
+        uint32_t p1 = 0, o1[8], w1[8];
+        uint8_t n1 = 0, d1 = 0;
+        st_field(s, "nm_ptr", &p1, 4); st_field(s, "nm_orig", o1, sizeof o1); st_field(s, "nm_wrote", w1, sizeof w1);
+        st_field(s, "nm_n", &n1, 1); st_field(s, "nm_dark", &d1, 1);
+        nm_take(81, p1, NULL, o1, w1, n1 > 8 ? 8 : n1, d1);
+    }
+}
+void hooks_night_frame(void) { night_frame(); }

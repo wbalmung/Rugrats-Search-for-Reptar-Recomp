@@ -605,8 +605,10 @@ logs every list packet with its layer and each frame's room point count.
 - `RUGRATS_MOVERSMOOTH=0` turns off platform smoothing (default on: elevators and moving platforms, which the game
   moves in fixed 1/30 s steps, glide between those steps at high fps). `RUGRATS_TIMERLOG=1` logs every 1/30 s timer
   callback the game fires (frame, object, callback).
-- `RUGRATS_FANSTILL=0/1` sets the Ceiling Fan option (Enhancements), `RUGRATS_FANLOG=1` logs every spinning-prop
-  update (level, object, model, speeds, angles).
+- `RUGRATS_LIGHTFIXES=0/1` sets the "Let There Be Light" Fixes option (Enhancements); `RUGRATS_FANSTILL=0` /
+  `RUGRATS_NIGHTFURN=0` turn off only its fan / furniture part. `RUGRATS_FANLOG=1` logs every spinning-prop update
+  (level, object, model, speeds, angles); `RUGRATS_NIGHTCLUT`, `RUGRATS_NIGHTDBG`, `RUGRATS_NIGHTLOG` are the furniture
+  part's debug switches (see "Let There Be Light" Fixes).
 - `RUGRATS_AISMOOTH=0` turns off companion smoothing (default on: characters the game updates in a 1/30 s timer, like
   Chuckie following Tommy, get their running animation, position and heading drawn in between those updates at high
   fps; only the picture changes, the game's own state stays exactly as it was). `RUGRATS_AISMOOTHLOG=1` logs each
@@ -839,12 +841,35 @@ anims resume at that speed, so the walk plays at 2x until the player stops (same
 `80057214` notes the shot's speed write, and the walk body hook (`8005e1f4`) puts 0x1000 (0x800 for model 8) back on the
 first walking frame where neither layer (`obj+0xa8`, `obj+0xb4`) plays 0x27/0x32.
 
-Ceiling Fan (Enhancements page, ini `[game] fan_still`: 1 Fixed = default, 0 Original; `RUGRATS_FANSTILL`, debug
-`RUGRATS_FANLOG=1`): Let There Be Light (db 12) is set during a power cut, but the original keeps the kitchen ceiling
+"Let There Be Light" Fixes (Enhancements page, ini `[game] light_fixes`: 1 Fixed = default, 0 Original; an older ini's
+`fan_still` key is used when `light_fixes` is missing; `RUGRATS_LIGHTFIXES`). Two parts, both only in db 12:
+
+Ceiling fan part (debug `RUGRATS_FANSTILL=0` = this part off, `RUGRATS_FANLOG=1`): Let There Be Light (db 12) is set during a power cut, but the original keeps the kitchen ceiling
 fan turning. The fan is a generic spinning prop: its 1/30 s timer callback `8004e2ac` adds the s16 speeds
 `obj+0x2c/+0x2e/+0x30` x vblanks to the angles `obj+0x24/+0x26/+0x28`. Fixed: a hook zeroes those speeds for model 94
 (`obj+0x96`) in db 12 only, so the blades keep their spawn angle; other spinning props and other levels are untouched.
 Switching back to Original in the level gives the fan its speed again. Idea by flamespeedy.
+
+Furniture part (debug `RUGRATS_NIGHTFURN=0` = this part off,
+`RUGRATS_NIGHTCLUT=<hex CLUT>[:<hex source CLUT>],...` replaces the list, `RUGRATS_NIGHTDBG=1` paints the listed
+palettes red, `RUGRATS_NIGHTLOG=1`): Let There Be Light (db 12) is dark because its palettes (CLUTs) are dark; room and
+prop polygons are drawn at the neutral colour 0x808080. A few kitchen furniture textures kept daytime palettes on the
+disc, so they glow next to the room; the PS1 shows the same (VRAM equals the disc bytes, nothing is darkened at run
+time). Fixed, while db 12 runs: the centre drawer front and the orange cabinet doors get the palettes of their own
+night versions elsewhere in the kitchen (the other drawers, the counter doors: same texture layout, so they look exactly
+like those), copied in VRAM; the stove front and the fridge doors / side edges are scaled (red and green x 0.30, blue
+x 0.45); so is the light teal door panel (6edd, a room texture). Untextured props are darkened in their model data in
+RAM, found through the object draw hooks: the bathroom trash can (model 81, colour table at model header +0x18), the
+potted plants (models 949 / 950 / 951, flat-face colours of pot, soil and flat leaves; stems are already dark), the
+door knob (model 527), the coffee tables (model 132), the garage cardboard boxes (models 961 / 962), the stair
+handrail posts (model 1271), Tommy's bed sheets (model 1092), the purple toy on his toy chest (model 383, flat faces)
+and the Reptar doll on his nightstand (model 1130, plus its texture CLUTs 551d / 6d5d / 6d9d / 6ddd; the nightstand
+itself is CLUT 6d1d), the small green lamp on the dresser (model 388) and the underside of the kitchen ceiling fan
+(model 94: orange light cover and grey). Original puts
+the saved colours back. Save states keep the model rows by model id (`hooks.nm3_*`, fixed 32 x 128 layout); states
+from the two earlier test layouts are converted. Uploads over a listed CLUT re-arm it, other levels are never touched,
+save states keep the state (older states are handled). Not covered: the range hood over the stove (untextured, lit by
+vertex colours).
 
 Final Level Behavior (Enhancements page, ini `[game] final_level`: 1 Enhanced = default, 0 Default = original;
 `RUGRATS_FINALLEVEL`). Enhanced = three parts, all on or all off: (1) stay in the level after the last piece, (2) a
