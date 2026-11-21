@@ -2911,12 +2911,20 @@ static void exec_poly(uint32_t *f) {
                    on it as a light-blue slab (2026-11-12). RUGRATS_ZTAGPICK=0 = old. */
                 static int ztp = -1;
                 if (ztp < 0) { const char *e = getenv("RUGRATS_ZTAGPICK"); ztp = e ? atoi(e) != 0 : 1; }
+                /* Neither candidate near the tag (2026-11-20, user video: Reptar 2010 "Pizza Planetoid" sign, single frames
+                   with a brick wedge over it): the sign's corner pixel held only a far room point (iz 0.221; the
+                   corner's own tag 0.443), so the sign half got a corner twice as far away, the room test hid it
+                   behind the coplanar brick facade, and the facade showed through. The tag is the corner's own GTE
+                   output: when it is off from both table depths by more than 3%, it wins. RUGRATS_ZTAGPICK=0 = old. */
                 for (k = 0; ztp && k < nv; k++)
-                    if (zn[k] != v[k].iz && tiz[k] > 0) {
+                    if (tiz[k] > 0) {
                         const float pick = fabsf(zn[k] - tiz[k]) < fabsf(v[k].iz - tiz[k]) ? zn[k] : v[k].iz;
                         if (fabsf(pick - tiz[k]) <= 0.03f * tiz[k]) {
-                            if (gpu_cmdlog) rt_logf("   ztag: corner %d depth %.3f / %.3f -> %.3f (tag %.3f)\n", k, v[k].iz, zn[k], pick, tiz[k]);
-                            v[k].iz = zn[k] = pick;
+                            if (zn[k] != v[k].iz && gpu_cmdlog) rt_logf("   ztag: corner %d depth %.3f / %.3f -> %.3f (tag %.3f)\n", k, v[k].iz, zn[k], pick, tiz[k]);
+                            if (zn[k] != v[k].iz) v[k].iz = zn[k] = pick;
+                        } else {
+                            if (gpu_cmdlog) rt_logf("   ztag: corner %d depth %.3f / %.3f off the tag -> %.3f\n", k, v[k].iz, zn[k], tiz[k]);
+                            v[k].iz = zn[k] = tiz[k];
                         }
                     }
                 for (k = 0; k < nv; k++) if (zn[k] != v[k].iz) { amb = k; namb++; }
@@ -3060,6 +3068,21 @@ static void exec_poly(uint32_t *f) {
                 for (k = 0; k < nv; k++) v[k].oid = id;
                 if (id && (int64_t)(v[1].x - v[0].x) * (v[2].y - v[0].y) - (int64_t)(v[1].y - v[0].y) * (v[2].x - v[0].x) > 0)
                     dm = DM_TW;
+            }
+            /* Object corner off its own tag (2026-11-20, user: Reptar 2010, a window box hidden under a wall-grey prop
+               face until the camera moved): a prop face's corner took 0.413 from the pixel table (another object
+               point on that pixel) while its own tag said 0.381, ~900 units too near; with objsort it stored that
+               depth and hid the planter drawn after it. After the objsort model lookup (subpx_oid_z), which
+               reads the same kind of per-pixel table. Same rule as the room corners (ZTAGPICK): a tag depth more
+               than 3% off the table wins. RUGRATS_ZTAGPICK=0 = old. */
+            if (dm == DM_TEST || dm == DM_TW) {
+                static int ztp = -1;
+                if (ztp < 0) { const char *e = getenv("RUGRATS_ZTAGPICK"); ztp = e ? atoi(e) != 0 : 1; }
+                for (k = 0; ztp && k < nv; k++)
+                    if (tiz[k] > 0 && fabsf(v[k].iz - tiz[k]) > 0.03f * tiz[k]) {
+                        if (gpu_cmdlog) rt_logf("   ztag: object corner %d depth %.3f off the tag -> %.3f\n", k, v[k].iz, tiz[k]);
+                        v[k].iz = tiz[k];
+                    }
             }
             /* shadows under characters (semi-transparent quads lying on the floor, GP0 2E): the game sorts the
                player's shadow among the slippers' faces, so while the stick camera turned it painted over the feet in
