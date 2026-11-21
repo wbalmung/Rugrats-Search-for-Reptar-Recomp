@@ -3762,7 +3762,8 @@ void night_upload(int x, int y, int w, int h) {
    -> saved and darkened again; Original writes the saved colours back if the words still hold ours. */
 #define NMF_TABLE 1
 #define NMF_FLAT  2
-static const struct { uint16_t id; uint8_t flags; } night_model_tab[] = {
+/* part: a model with more than NM_COLS colour words takes several rows; row part p covers words p*NM_COLS.. */
+static const struct { uint16_t id; uint8_t flags, part; } night_model_tab[] = {
     { 81, NMF_TABLE },              /* bathroom trash can (teal, 2 table colours) */
     { 950, NMF_FLAT },              /* potted plant: pot + soil (flat faces; leaves textured, stem greens left) */
     { 951, NMF_FLAT },              /* potted plant, blue-grey pot + soil */
@@ -3777,6 +3778,18 @@ static const struct { uint16_t id; uint8_t flags; } night_model_tab[] = {
     { 383, NMF_FLAT },              /* toy chest: its only flat faces are the purple toy on top */
     { 388, NMF_TABLE | NMF_FLAT },  /* small green lamp on the dresser */
     { 94, NMF_TABLE | NMF_FLAT },   /* kitchen ceiling fan: underside (orange light cover, grey) */
+    { 964, NMF_FLAT },              /* golf clubs + bag (147 flat faces: two rows) */
+    { 964, NMF_FLAT, 1 },
+    { 263, NMF_TABLE },             /* trash can in front of the golf clubs (teal) */
+    { 958, NMF_FLAT },              /* laundry: washer / dryer */
+    { 959, NMF_FLAT },              /* laundry: washer / dryer */
+    { 963, NMF_FLAT },              /* laundry: sink */
+    { 960, NMF_FLAT },              /* laundry: bench */
+    { 239, NMF_TABLE },             /* kitchen hood over the stove (grey) */
+    { 138, NMF_TABLE },             /* living room floor lamp: stand + base */
+    { 953, NMF_FLAT },              /* fireplace: inside of the opening */
+    { 954, NMF_FLAT },              /* ball on the living room floor */
+    { 134, NMF_TABLE },             /* side table: frame (drawer fronts are a dark texture) */
 };
 #define NM_N (sizeof night_model_tab / sizeof night_model_tab[0])
 /* NM_MAX / NM_COLS are part of the save-state layout ("hooks.nm3_*", rows matched by model id): never change them,
@@ -3789,12 +3802,25 @@ static uint32_t night_col(uint32_t c) {                /* bytes R, G, B, code: s
     const uint32_t r = c & 0xff, g = (c >> 8) & 0xff, b = (c >> 16) & 0xff;
     return (c & 0xff000000u) | ((r * 30 + 50) / 100) | ((g * 30 + 50) / 100) << 8 | ((b * 45 + 50) / 100) << 16;
 }
-static unsigned night_collect(uint32_t m, unsigned flags, uint32_t *addr) {   /* colour word addresses, 0 = none */
+#define NM_ALL (NM_COLS * 4)   /* colour words collected per model, all parts */
+_Static_assert(NM_N <= NM_MAX, "night_model_tab has more rows than the save-state layout (NM_MAX)");
+#define NM_KEY(k) ((uint16_t)(night_model_tab[k].id | night_model_tab[k].part << 12))   /* state row key */
+static unsigned night_collect_all(uint32_t m, unsigned flags, uint32_t *addr);
+static unsigned night_collect(uint32_t m, unsigned flags, unsigned part, uint32_t *addr) {   /* this row's words */
+    static uint32_t all[NM_ALL];
+    const unsigned n = night_collect_all(m, flags, all), from = part * NM_COLS;
+    if (n <= from) return 0;
+    const unsigned c = n - from > NM_COLS ? NM_COLS : n - from;
+    memcpy(addr, all + from, 4 * c);
+    return c;
+}
+static unsigned night_collect_all(uint32_t m, unsigned flags, uint32_t *addr) {   /* colour word addresses, 0 = none */
     unsigned n = 0;
+
     if (flags & NMF_TABLE) {
         const uint32_t tab = mem_r32(m + 0x18), cnt = mem_r32(m + 0x10) >> 16;
         if ((tab >> 24) == 0x80u)
-            for (uint32_t i = 0; i < cnt && n < NM_COLS; i++) addr[n++] = tab + 4 * i;
+            for (uint32_t i = 0; i < cnt && n < NM_ALL; i++) addr[n++] = tab + 4 * i;
     }
     if (flags & NMF_FLAT) {
         uint32_t a = mem_r32(m + 0x1c);
@@ -3808,7 +3834,7 @@ static unsigned night_collect(uint32_t m, unsigned flags, uint32_t *addr) {   /*
             }
             if (!size || cnt > 1000) break;
             if (typ == 0x20 || typ == 0x28)
-                for (uint32_t i = 0; i < cnt && n < NM_COLS; i++) addr[n++] = a + 4 + i * size + 8;
+                for (uint32_t i = 0; i < cnt && n < NM_ALL; i++) addr[n++] = a + 4 + i * size + 8;
             a += 4 + cnt * size;
         }
     }
@@ -3818,7 +3844,7 @@ static void night_model(unsigned k) {
     if (!nm_n[k]) return;
     if (!nm_addr[k][0]) {                 /* from an old state without addresses: collect them again */
         uint32_t a[NM_COLS];
-        const unsigned n = night_collect(nm_ptr[k], night_model_tab[k].flags, a);
+        const unsigned n = night_collect(nm_ptr[k], night_model_tab[k].flags, night_model_tab[k].part, a);
         if (n < nm_n[k]) nm_n[k] = (uint8_t)n;
         memcpy(nm_addr[k], a, sizeof a);
         if (!nm_addr[k][0]) { nm_n[k] = 0; return; }
@@ -3851,12 +3877,11 @@ void hooks_night_obj(uint32_t obj) {
         if ((m >> 24) != 0x80u) return;
         if (m != nm_ptr[k]) {
             nm_ptr[k] = m; nm_dark[k] = 0;
-            nm_n[k] = (uint8_t)night_collect(m, night_model_tab[k].flags, nm_addr[k]);
+            nm_n[k] = (uint8_t)night_collect(m, night_model_tab[k].flags, night_model_tab[k].part, nm_addr[k]);
             memset(nm_wrote[k], 0, sizeof nm_wrote[k]);
         }
         night_init();
-        night_model(k);
-        return;
+        night_model(k);                  /* no return: a big model has more rows */
     }
 }
 static void night_frame(void) {
@@ -3892,7 +3917,7 @@ static void nm_take(uint16_t id, uint32_t ptr, const uint32_t *addr, const uint3
                     unsigned n, unsigned dark) {
     if (!ptr || !n) return;
     for (unsigned k = 0; k < NM_N; k++) {
-        if (night_model_tab[k].id != id) continue;
+        if (NM_KEY(k) != id) continue;
         if (n > NM_COLS) n = NM_COLS;
         nm_ptr[k] = ptr; nm_n[k] = (uint8_t)n; nm_dark[k] = (uint8_t)dark;
         memset(nm_addr[k], 0, sizeof nm_addr[k]);
@@ -3932,7 +3957,7 @@ void hooks_night_state(StateIO *s) {
     static uint16_t mid[NM_MAX];
     if (!st_loading(s)) {
         memset(mid, 0, sizeof mid);
-        for (unsigned k = 0; k < NM_N; k++) mid[k] = night_model_tab[k].id;
+        for (unsigned k = 0; k < NM_N; k++) mid[k] = NM_KEY(k);
         st_field(s, "nm3_ids", mid, sizeof mid);
         st_field(s, "nm3_ptr", nm_ptr, sizeof nm_ptr); st_field(s, "nm3_addr", nm_addr, sizeof nm_addr);
         st_field(s, "nm3_orig", nm_orig, sizeof nm_orig); st_field(s, "nm3_wrote", nm_wrote, sizeof nm_wrote);

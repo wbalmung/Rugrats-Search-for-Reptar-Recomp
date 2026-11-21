@@ -865,7 +865,11 @@ door knob (model 527), the coffee tables (model 132), the garage cardboard boxes
 handrail posts (model 1271), Tommy's bed sheets (model 1092), the purple toy on his toy chest (model 383, flat faces)
 and the Reptar doll on his nightstand (model 1130, plus its texture CLUTs 551d / 6d5d / 6d9d / 6ddd; the nightstand
 itself is CLUT 6d1d), the small green lamp on the dresser (model 388) and the underside of the kitchen ceiling fan
-(model 94: orange light cover and grey). Original puts
+(model 94: orange light cover and grey), the golf clubs and bag (model 964) with the trash can in front (model 263),
+in the laundry the washer and dryer (models 958 / 959), the sink (963) and the bench (960), the kitchen hood (239), the
+living room floor lamp stand (138), the inside of the fireplace (953), the ball (954) and the frame of a side table
+(134; its drawer fronts are a dark texture already). A model with more than
+128 colour words takes several rows (the golf clubs: two). Original puts
 the saved colours back. Save states keep the model rows by model id (`hooks.nm3_*`, fixed 32 x 128 layout); states
 from the two earlier test layouts are converted. Uploads over a listed CLUT re-arm it, other levels are never touched,
 save states keep the state (older states are handled). Not covered: the range hood over the stove (untextured, lit by
