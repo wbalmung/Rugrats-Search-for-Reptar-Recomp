@@ -2704,6 +2704,39 @@ static void near_room(void (*fn)(void), int *in, int nv) {
     *in = 1; fn(); *in = 0;
     const uint32_t w = mem_r32(cpu.r[16]), tab = cpu.r[14];
     const uint32_t off[4] = { (w & 0xffu) << 3, (w >> 5) & 0x7f8u, (w >> 13) & 0x7f8u, (w >> 21) & 0x7f8u };
+    /* No 2D split with perspective textures (2026-11-20, user: Grandpa's Teeth, the bricks along the hedge border
+       bend upward past a certain camera position). The caller splits a face that passed in 2D (flags 0x20: all
+       corners SZ < 8192 -> 2 pieces, 0x40: < 4096 -> 4; t7 bits 21 / 22), with each new corner at the average
+       texture coordinate, to hide the PS1's affine warp. The garden wall's quads have texture coordinates that are
+       not a flat function of their 3D corners (trapezoid stretch, up to ~30 texels off), so with perspective-correct
+       pieces the bricks bend along whatever cut the pieces have, and the cut changes when the camera crosses the
+       split distance: the texture jumps there. With perspective textures on, a face that is not at the lens (every
+       corner SZ >= RUGRATS_NOSPLITZ, default 1000) and within the PS1's polygon size limit (< 1024 x 512) is drawn
+       whole (first try capped it at 512 x 256: tall hedge faces beside the wall kept their splits and still bent).
+       RUGRATS_NOSPLIT=0 = the game's splits (old). */
+    if ((int32_t)cpu.r[25] > 0 && (cpu.r[23] & (3u << 21)) && opt.perspective && gte_dcls == DCLS_ROOM) {
+        static int ns = -1, zmin = -1;
+        if (ns < 0) { const char *e = getenv("RUGRATS_NOSPLIT"); ns = e ? atoi(e) != 0 : 1; }
+        if (zmin < 0) { const char *e = getenv("RUGRATS_NOSPLITZ"); zmin = e ? atoi(e) : 1000; }
+        if (ns) {
+            int x0 = 1 << 20, x1 = -(1 << 20), y0 = 1 << 20, y1 = -(1 << 20), ok = 1;
+            for (int k = 0; k < nv && ok; k++) {
+                const uint32_t sxy = mem_r32(tab + off[k]), fl = mem_r32(tab + off[k] + 4);
+                const int sx = (int16_t)sxy, sy = (int16_t)(sxy >> 16);
+                ok = (int)(fl & 0xffffu) >= zmin && sx > -1024 && sx < 1023 && sy > -1024 && sy < 1023;
+                if (sx < x0) x0 = sx;
+                if (sx > x1) x1 = sx;
+                if (sy < y0) y0 = sy;
+                if (sy > y1) y1 = sy;
+            }
+            if (ok && x1 - x0 < 1024 && y1 - y0 < 512) cpu.r[23] &= ~(3u << 21);
+            else if (lg) {
+                int zm = 1 << 30;
+                for (int k = 0; k < nv; k++) { const int z = (int)(mem_r32(tab + off[k] + 4) & 0xffffu); if (z < zm) zm = z; }
+                rt_logf("f%u nosplit kept split: %s min SZ %d bbox %d,%d..%d,%d\n", present_count, ok ? "size" : "near/pinned", zm, x0, y0, x1, y1);
+            }
+        }
+    }
     if ((int32_t)cpu.r[25] > 0 || !on || gte_dcls != DCLS_ROOM || !opt.subpixel) return;
     uint32_t all = 0xffffffffu, anynear = 0;
     for (int k = 0; k < nv; k++) { const uint32_t fl = mem_r32(tab + off[k] + 4); all &= fl; anynear |= fl & (1u << 20); }
