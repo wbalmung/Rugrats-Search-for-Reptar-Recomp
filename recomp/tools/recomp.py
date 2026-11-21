@@ -35,6 +35,8 @@ HOOKS = {
     0x800102dc: "mesh quad face setup (t9 > 0 = draw): faces of near-cull-passed objects with a corner at the lens are skipped",
     0x80010000: "model draw (a0 = model): back-to-back double-sided panels (signs) drawn one-sided (pair cull)",
     0x80010174: "mesh triangle face setup (t9 > 0 = draw): same as 800102dc",
+    0x800112dc: "room tri face setup (t9 > 0 = draw): faces reaching behind the camera culled by mirrored outcodes pass when in view",
+    0x800113c8: "room quad face setup (t9 > 0 = draw): same as 800112dc",
     0x80033278: "room/portal visibility test: parent rect widened by RUGRATS_PORTALPAD px during the call (door jamb pop-in)",
     0x8008b448: "movie player entry (a0 = movie index; RUGRATS_MOVIE debug override)",
     0x80030010: "still screen for N seconds (boot: legal screen; skip_intro)",

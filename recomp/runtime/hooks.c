@@ -2670,6 +2670,132 @@ static void near_face(void (*fn)(void), int *in, int nv) {
 }
 void f_800102dc(void);
 void f_80010174(void);
+/* Room faces reaching behind the camera (2026-11-20, user: Reptar 2010, a dark bar across the street in front of
+   Reptar until the camera moved). The room renderer 80010e14 flags each projected vertex (table t6, 8 bytes: +0 SXY,
+   +4 SZ | bit 16-19 outcodes vs the room rect at a2+0x18 / +0x1c, bit 20 SZ < H, 21 SZ < 8192, 22 SZ < 4096), and
+   its face setups 800112dc (tri) / 800113c8 (quad) drop a face when all corners share an outcode (or all are near).
+   A long street strip with corners behind the camera: those project mirrored and pin at the far screen edge, their
+   outcode matched the in-front corners off that edge, and the strip was dropped although its middle crossed the
+   screen (clear colour showed as a bar). For a room face culled that way with a corner near / behind the camera
+   (bit 20): its corners' camera-space points (SXY tags) are clipped against z >= 16 and the room rect; when
+   something is left and the true face looks at the camera, it passes as the game's own pass path would (SXY loaded,
+   OTZ = max SZ / 4 < 16250, t9 = 1). gpu.c draws it from its true points (clamp_draw). RUGRATS_NEARROOM=0 = off,
+   RUGRATS_NEARROOMLOG=1. */
+int gte_sxp(int s, double out[3]);
+void gte_proj_params(double *ox, double *oy, double *h, double *w);
+static int nr_clip(double (*in)[3], int n, double (*out)[3], double a0, double a1, double a2) {   /* keep a.p >= 0 */
+    int m = 0;
+    for (int i = 0; i < n && m < 12; i++) {
+        const double *A = in[i], *B = in[(i + 1) % n];
+        const double fa = a0 * A[0] + a1 * A[1] + a2 * A[2], fb = a0 * B[0] + a1 * B[1] + a2 * B[2];
+        if (fa >= 0) { memcpy(out[m], A, sizeof out[m]); m++; }
+        if (((fa < 0 && fb > 0) || (fa > 0 && fb < 0)) && m < 12) {
+            const double t = fa / (fa - fb);
+            for (int k = 0; k < 3; k++) out[m][k] = A[k] + (B[k] - A[k]) * t;
+            m++;
+        }
+    }
+    return m;
+}
+static void near_room(void (*fn)(void), int *in, int nv) {
+    static int on = -1, lg = -1;
+    if (on < 0) { const char *e = getenv("RUGRATS_NEARROOM"); on = e ? atoi(e) != 0 : 1; }
+    if (lg < 0) lg = getenv("RUGRATS_NEARROOMLOG") != NULL;
+    *in = 1; fn(); *in = 0;
+    const uint32_t w = mem_r32(cpu.r[16]), tab = cpu.r[14];
+    const uint32_t off[4] = { (w & 0xffu) << 3, (w >> 5) & 0x7f8u, (w >> 13) & 0x7f8u, (w >> 21) & 0x7f8u };
+    if ((int32_t)cpu.r[25] > 0 || !on || gte_dcls != DCLS_ROOM || !opt.subpixel) return;
+    uint32_t all = 0xffffffffu, anynear = 0;
+    for (int k = 0; k < nv; k++) { const uint32_t fl = mem_r32(tab + off[k] + 4); all &= fl; anynear |= fl & (1u << 20); }
+    if (lg && atoi(getenv("RUGRATS_NEARROOMLOG")) == 2) {   /* debug: every culled room face */
+        char b[300]; int m = 0;
+        for (int k = 0; k < nv; k++) {
+            const uint32_t fl = mem_r32(tab + off[k] + 4), sxy = mem_r32(tab + off[k]);
+            m += snprintf(b + m, sizeof b - m, " (%d,%d sz%u fl%02x)", (int16_t)sxy, (int16_t)(sxy >> 16), fl & 0xffffu, (fl >> 16) & 0x7f);
+        }
+        rt_logf("f%u roomcull %s and %02x t23 %08x%s\n", present_count, nv == 4 ? "quad" : "tri", (all >> 16) & 0x7f, cpu.r[23], b);
+    }
+    if (!((all >> 16) & 0x1f) || ((all >> 16) & 0x10)) return;   /* culled for another reason / all near */
+    if (!anynear) {
+        /* Just outside the room rect (2026-11-20, same bar, the actual cause): the far room was entered through a
+           portal whose rect ends at the street; that room's next row of street tiles lies a little in front of the
+           portal plane, projects just below the rect's bottom edge, and every corner's "below" outcode culled it,
+           while the near room's floor ends before it. A face culled only by "below the rect" passes when it reaches
+           within RUGRATS_ROOMRECTPAD native pixels (default 16, 0 = off) of the rect's bottom edge; it then goes
+           through the game's own pass path (OTZ limit, double-sided flag, NCLIP). Below only: padding every side
+           also let far buildings poke up past a near roofline in 16 px ragged bits. */
+        static int pad = -1;
+        if (pad < 0) { const char *e = getenv("RUGRATS_ROOMRECTPAD"); pad = e ? atoi(e) : 16; }
+        if (pad <= 0 || ((all >> 16) & 0xf) != 8) return;   /* below the rect only (floor in front of the doorway) */
+        const uint32_t ry = mem_r32(cpu.r[6] + 0x1c);
+        const int y1 = (int16_t)(ry >> 16) + pad;
+        int below = 1;
+        for (int k = 0; k < nv && below; k++) below = (int16_t)(mem_r32(tab + off[k]) >> 16) > y1;
+        if (below) return;
+        gte_mtc2_sxy(12, cpu.r[17], tag_ld[17]);
+        gte_mtc2_sxy(13, cpu.r[18], tag_ld[18]);
+        gte_mtc2_sxy(14, cpu.r[19], tag_ld[19]);
+        const int32_t otz = (int32_t)cpu.r[21] >> 2;
+        cpu.r[21] = (uint32_t)otz;
+        if (otz >= 16250) { cpu.r[25] = 0; return; }
+        if (cpu.r[23] & 0x200u) { cpu.r[25] = 1; }
+        else {
+            gte_op(0x1400006u);
+            int32_t a = (int32_t)gte_read(24);
+            if (nv == 4) {
+                gte_mtc2_sxy(12, cpu.r[20], tag_ld[20]);
+                if (a <= 0) { gte_op(0x1400006u); a = -(int32_t)gte_read(24); }
+            }
+            cpu.r[25] = (uint32_t)a;
+        }
+        if (lg) rt_logf("f%u roomrect %s outside the rect by < %d px: %s\n", present_count, nv == 4 ? "quad" : "tri", pad,
+                        (int32_t)cpu.r[25] > 0 ? "drawn" : "back face");
+        return;
+    }
+    /* camera-space points: load the corners through the GTE's tag path (R17..R20 hold them with their sources) */
+    double P[4][3];
+    static const int reg[4] = { 17, 18, 19, 20 };
+    for (int k = 0; k < nv; k++) {
+        gte_mtc2_sxy(12, cpu.r[reg[k]], tag_ld[reg[k]]);
+        if (!gte_sxp(0, P[k])) return;
+    }
+    /* facing: det(P0, P1, P2) > 0 = front (same sign as the screen area when all are in front); quads also try the
+       game's second triangle (v3, v1, v2), negated */
+    #define DET3(a, b, c) ((a)[0] * ((b)[1] * (c)[2] - (b)[2] * (c)[1]) - (a)[1] * ((b)[0] * (c)[2] - (b)[2] * (c)[0]) + (a)[2] * ((b)[0] * (c)[1] - (b)[1] * (c)[0]))
+    const int front = DET3(P[0], P[1], P[2]) > 0 || (nv == 4 && -DET3(P[3], P[1], P[2]) > 0);
+    #undef DET3
+    if (!front) return;
+    /* anything left inside the room rect in front of the lens? (quad corner order 0 1 3 2 around) */
+    double ox, oy, hh, ww;
+    gte_proj_params(&ox, &oy, &hh, &ww);
+    const uint32_t rx = mem_r32(cpu.r[6] + 0x18), ry = mem_r32(cpu.r[6] + 0x1c);
+    const double x0 = (int16_t)rx, x1 = (int16_t)(rx >> 16), y0 = (int16_t)ry, y1 = (int16_t)(ry >> 16);
+    double a[12][3], b[12][3];
+    static const int ring4[4] = { 0, 1, 3, 2 };
+    int n = nv;
+    for (int k = 0; k < nv; k++) memcpy(a[k], P[nv == 4 ? ring4[k] : k], sizeof a[k]);
+    n = nr_clip(a, n, b, 0, 0, 1);  for (int k = 0; k < n; k++) b[k][2] -= 16;   /* z >= 16: shift, clip, shift back */
+    n = nr_clip(b, n, a, 0, 0, 1);  for (int k = 0; k < n; k++) a[k][2] += 16;
+    n = nr_clip(a, n, b, hh * ww, 0, ox - x0);     /* sx >= x0 */
+    n = nr_clip(b, n, a, -hh * ww, 0, x1 - ox);    /* sx <= x1 */
+    n = nr_clip(a, n, b, 0, hh, oy - y0);          /* sy >= y0 */
+    n = nr_clip(b, n, a, 0, -hh, y1 - oy);         /* sy <= y1 */
+    if (lg) rt_logf("f%u nearroom %s %d corners z %.0f %.0f %.0f%s%.0f -> %d left\n", present_count, nv == 4 ? "quad" : "tri", nv,
+                    P[0][2], P[1][2], P[2][2], nv == 4 ? " " : "", nv == 4 ? P[3][2] : 0.0, n);
+    if (n < 3) return;
+    /* the game's pass path: SXY0-2 = corners 0-2, OTZ check, draw */
+    gte_mtc2_sxy(12, cpu.r[17], tag_ld[17]);
+    gte_mtc2_sxy(13, cpu.r[18], tag_ld[18]);
+    gte_mtc2_sxy(14, cpu.r[19], tag_ld[19]);
+    const int32_t otz = (int32_t)cpu.r[21] >> 2;
+    if (otz >= 16250) return;
+    cpu.r[21] = (uint32_t)otz;
+    cpu.r[25] = 1;
+}
+void f_800112dc(void);
+void f_800113c8(void);
+int rt_hook_800112dc(void) { static int in; if (in || gte_dcls != DCLS_ROOM) return 0; near_room(f_800112dc, &in, 3); return 1; }
+int rt_hook_800113c8(void) { static int in; if (in || gte_dcls != DCLS_ROOM) return 0; near_room(f_800113c8, &in, 4); return 1; }
 int rt_hook_800102dc(void) { static int in; if (in || !(near_pass || pair_model)) return 0; near_face(f_800102dc, &in, 4); return 1; }
 int rt_hook_80010174(void) { static int in; if (in || !(near_pass || pair_model)) return 0; near_face(f_80010174, &in, 3); return 1; }
 int rt_hook_8003205c(void) {

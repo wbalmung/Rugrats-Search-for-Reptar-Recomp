@@ -272,6 +272,12 @@ void gte_proj_params(double *ox, double *oy, double *h, double *w) {   /* SX = h
 void gte_cam(double r[9], double t[3]) {
     for (int i = 0; i < 3; i++) { for (int j = 0; j < 3; j++) r[i * 3 + j] = RT[i][j]; t[i] = TR[i]; }
 }
+/* camera-space point of SXY entry s (0..2) when known (tags / RTPS), for hooks.c near faces */
+int gte_sxp(int s, double out[3]) {
+    if (s < 0 || s > 2 || !SXPK[s]) return 0;
+    for (int k = 0; k < 3; k++) out[k] = SXP[s][k];
+    return 1;
+}
 int32_t gte_ws_x(int32_t x) { return opt.widescreen ? (int32_t)((int64_t)x * ws_num / ws_den) : x; }
 /* inverse of the squeeze (4/3), for models that must keep their 4:3 screen position (hooks.c 8003f934) */
 int64_t ws_hud_num(void) { return ws_den; }

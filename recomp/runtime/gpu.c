@@ -3269,6 +3269,9 @@ static void exec_poly(uint32_t *f) {
         if (reproj) {
             int any = 0;
             for (int k = 0; k < nv && !any; k++) any = np_fromclamp(f[vi[k]], 0);
+            /* a corner behind the camera (hooks.c near_room lets such room faces through): its projection is mirrored,
+               not always pinned, so the game's polygon is garbage; drawn from the true points (clipped at z >= 1) */
+            for (int k = 0; k < nv && !any; k++) any = cp3[k].p[2] < 1.0f;
             if (!any && bigtri()) {
                 /* too big for the PS1 GPU (> 1023 x 511) with every corner really projected (in front of the lens, not
                    pinned): a door frame right at the stick camera spans ~620 lines; the PS1 drops it and the next room
