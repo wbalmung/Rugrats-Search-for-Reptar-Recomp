@@ -205,6 +205,22 @@ static inline float oz_mark(float rz) {    /* inverse of oz_reach: room depth as
 }
 static inline float oz_pack(float z, unsigned id) { uint32_t u; memcpy(&u, &z, 4); u = (u & ~OID_MASK) | id; memcpy(&z, &u, 4); return z; }
 static inline unsigned oz_id(float z) { uint32_t u; memcpy(&u, &z, 4); return u & OID_MASK; }
+/* Props in front of props (part of objsort; 2026-11-20, laundry room): the model sort fix only hides faces of the SAME
+   model, so two props standing close together keep the game's order, and the game can draw a face of one AFTER a
+   nearer face of the other: the top-loader's front painted over most of the front-loader's left border, ~70 camera
+   units in front of it (only a notch of it was left). Now a still prop's opaque pixel (polygon OID_STATIC, model id
+   set) stores its id with OID_ACTOR (bit 12) like a character's pixel, so a later still prop face of ANOTHER model
+   clearly behind it is hidden by the "behind a character" rule (object gap; floor-like faces also the floor gap).
+   Its own model's faces still match it as the same model (id | OID_ACTOR). Same 13 id bits as before (a first try
+   with an extra bit 13 made the stored depth coarser and cut pixels of Tommy's hair strands).
+   Moving props and characters are never hidden by this (only still props mark and get hidden). Cross-model sorting
+   was first dropped (2026-11-08) because it showed the toy store stand's light-blue lid; the user wants that lid
+   shown since 2026-11-10. RUGRATS_PROPSORT=0 = off (old). */
+int gpu_propsort(void) {
+    static int r = -1;
+    if (r < 0) { const char *e = getenv("RUGRATS_PROPSORT"); r = e ? atoi(e) != 0 : 1; }
+    return r && opt.objsort;
+}
 static int depth_vis = -1;   /* RUGRATS_DEPTHVIS=1 (CPU renderer, debug): show what the depth check misses */
 static int hw_s; /* scale when the D3D11 hardware renderer (gpu_d3d11.c) draws the hi-res picture, else 0 */
 
@@ -1310,15 +1326,20 @@ static void tri_t(const St *st, const Tgt *T, int band, int nb, Vtx a, Vtx b, Vt
                 const unsigned myid = (unsigned)a.oid & OID_MASK;
                 if (ozrow[x] > 0 && depth_reach((float)fz) < ozrow[x]) {
                     const unsigned oi = oz_id(ozrow[x]);
-                    if (myid && oi == myid) continue;
+                    if (myid && (oi == myid || (oi == (myid | OID_ACTOR) && gpu_propsort()))) continue;   /* own model (a still
+                                                                                   prop stores its pixels with OID_ACTOR) */
                     if (oi && ((unsigned)a.oid & OID_GLASS)) continue;   /* glass drawn last: behind any model (glass_q) */
-                    if ((oi & OID_ACTOR) && ((unsigned)a.oid & OID_STATIC)) {   /* still prop behind a character */
+                    if ((oi & OID_ACTOR) && ((unsigned)a.oid & OID_STATIC)) {   /* still prop behind a character / another still prop */
                         if (!((unsigned)a.oid & OID_FLOOR)) continue;
                         const float kf = (float)fz * (gpu_depth_k() + gpu_floor_k());   /* floor-like: only well behind */
                         if (kf < 0.999f && (float)fz / (1.0f - kf) < ozrow[x]) continue;
                     }
                 }
-                if (dm == DM_TW) { float zs = oz_pack(objsort_store((float)fz), myid); if (zs > ozrow[x]) ozrow[x] = zs; }
+                if (dm == DM_TW) {
+                    const unsigned st_bit = myid && ((unsigned)a.oid & OID_STATIC) && gpu_propsort() ? OID_ACTOR : 0;
+                    float zs = oz_pack(objsort_store((float)fz), myid | st_bit);
+                    if (zs > ozrow[x]) ozrow[x] = zs;
+                }
             }
             if ((dm == DM_HTEST || dm == DM_WNT) && zrow[x] >= HUD_Z) continue;   /* HUD stays on top */
             if (dm == DM_HUD) zrow[x] = HUD_Z;

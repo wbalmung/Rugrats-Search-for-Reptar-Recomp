@@ -68,6 +68,7 @@ extern unsigned subpx_cur_oid;                         /* model id of the object
                                                           the list (gpu.c glass_q): hidden behind any stored model pixel */
 void gpu_glass_flush(void);                            /* draws the held-back glass (gpu.c; end of each DMA2 list) */
 #define OID_MASK 0x1FFFu                               /* the part stored with object depth and compared */
+int gpu_propsort(void);                                /* still props hide each other's faces behind them (gpu.c) */
 extern unsigned gte_oid_bits;                          /* OID_ACTOR / OID_STATIC of the object being drawn (hooks.c) */
 int subpx_oid(uint32_t sxy);                           /* model id of the object point(s) on that pixel, 0 = none / mixed */
 extern uint16_t vram[512 * 1024];

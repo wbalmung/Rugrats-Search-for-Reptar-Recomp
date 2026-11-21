@@ -312,7 +312,12 @@ tries fewer, then Off (logged). Alpha-tested cut-outs (texel 0) keep hard inner 
   1..4095, kept per pixel in the sub-pixel table, up to four models per pixel since boxes touch the shelf and each
   other and an animated model like Tommy's head can add more; extra ones are dropped; a polygon takes the one model all its corners share, none if two or none); the stored depth
   carries it in its 13 lowest mantissa bits. Different models (a clerk running past a stand, Tommy's limbs, shadows)
-  keep the game's order: hiding across models showed faces the game paints over (pie gallery). **Shadows under the
+  keep the game's order: hiding across models showed faces the game paints over (pie gallery). **Props in front of
+  props** (2026-11-20, `RUGRATS_PROPSORT=0` = off): two props that stand still (see below, `OID_STATIC`) may hide each
+  other: a still prop's pixel is stored with the character bit, so a later face of another still prop clearly behind
+  it (object gap; faces seen from above also the floor gap) is hidden, as behind a character. In the laundry room
+  ("Let There Be Light") the top-loader's front, ~70 units behind the front-loader's front, was drawn after it and
+  cut a notch out of its left border. Moving props and characters keep the game's order. **Shadows under the
   player** (`RUGRATS_SHADOWFIX=0` = old, `2` = floor gap too): a semi-transparent object face seen from above (the
   player's shadow quad, GP0 2E) counts as a still prop face, so it is hidden where it lies more than the object gap
   behind a stored player pixel. The game sorts the shadow among the slippers' faces; while the stick camera turned it

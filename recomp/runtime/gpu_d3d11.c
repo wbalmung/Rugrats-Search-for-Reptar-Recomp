@@ -88,6 +88,12 @@ static const char hw_src[] =
     "Texture2D<float> oz : register(t1);\n"
     "float OZL(float2 p, uint s) { return oz.Load(int3(int2(p), 0)); }\n"
     "#endif\n"
+    /* props in front of props (gpu.c gpu_propsort, cf2.z): a still prop's pixel (flag bit 29 + model id) stores its id
+       with bit 12 like a character's, so a later still prop face of another model clearly behind it is hidden like
+       one behind a character; its own model still matches (id | 0x1000) */
+    "#define SAME(oi, id) ((id) != 0u && ((oi) == (id) || (cf2.z != 0u && (oi) == ((id) | 0x1000u))))\n"
+    "uint OZID(P i) { uint id = (i.a.z >> 16) & 0x1FFFu;\n"
+    "  return id | (cf2.z != 0u && id != 0u && (i.a.z & 0x20000000u) != 0u ? 0x1000u : 0u); }\n"
     /* MSAA: the oz readers shade once per pixel and test oz for every sample, writing the passing samples as
        SV_Coverage (ANDed with the raster coverage by the hardware). They used to run per sample (SV_SampleIndex),
        which made 4x MSAA shade objects and most room pixels 4 times: 9x + 4x MSAA 4.3 -> ~3 ms GPU (goose level,
@@ -96,10 +102,10 @@ static const char hw_src[] =
     "  float iz = i.p.z * 64.0, k = iz * asfloat(cfg.z);\n"
     "  uint id = (i.a.z >> 16) & 0x1FFFu, oi = asuint(o) & 0x1FFFu;\n"
     "  if (o > 0 && k < 0.999 && iz / (1.0 - k) < o &&\n"
-    "      ((id != 0u && oi == id) || ((oi & 0x1000u) != 0u && (i.a.z & 0x20000000u) != 0u) ||\n"
+    "      (SAME(oi, id) || ((oi & 0x1000u) != 0u && (i.a.z & 0x20000000u) != 0u) ||\n"
     "       (oi != 0u && (i.a.z & 0x80000000u) != 0u))) {\n"
     "    float kf = iz * (asfloat(cfg.z) + ex.w);\n"
-    "    if ((oi == id && id != 0u) || (i.a.z & 0x40000000u) == 0u || (kf < 0.999 && iz / (1.0 - kf) < o)) return true;\n"
+    "    if (SAME(oi, id) || (i.a.z & 0x40000000u) == 0u || (kf < 0.999 && iz / (1.0 - kf) < o)) return true;\n"
     "  }\n"
     "  return false;\n"
     "}\n"
@@ -121,12 +127,12 @@ static const char hw_src[] =
        of still props (flag bit 29 = OID_STATIC of the polygon, gpu.c exec_poly) */
     "  uint id = (i.a.z >> 16) & 0x1FFFu, oi = asuint(o) & 0x1FFFu;\n"
     "  if (o > 0 && k < 0.999 && iz / (1.0 - k) < o &&\n"
-    "      ((id != 0u && oi == id) || ((oi & 0x1000u) != 0u && (i.a.z & 0x20000000u) != 0u) ||\n"
+    "      (SAME(oi, id) || ((oi & 0x1000u) != 0u && (i.a.z & 0x20000000u) != 0u) ||\n"
     /* glass drawn at the end of the list (bit 31, OID_GLASS, gpu.c glass_q): behind ANY stored model pixel */
     "       (oi != 0u && (i.a.z & 0x80000000u) != 0u))) {\n"
     /* floor-like still prop faces (bit 30, OID_FLOOR): only when also past the floor gap (ex.w = gpu_floor_k) */
     "    float kf = iz * (asfloat(cfg.z) + ex.w);\n"
-    "    if ((oi == id && id != 0u) || (i.a.z & 0x40000000u) == 0u || (kf < 0.999 && iz / (1.0 - kf) < o)) discard;\n"
+    "    if (SAME(oi, id) || (i.a.z & 0x40000000u) == 0u || (kf < 0.999 && iz / (1.0 - kf) < o)) discard;\n"
     "  }\n"
     "  return t;\n"
     "}\n"
@@ -137,7 +143,7 @@ static const char hw_src[] =
     "OZ ps_ow(P i) {\n"
     "  OT t = ps_test(i); OZ z; z.d = t.d;\n"
     "  float iz = i.p.z * 64.0, k = iz * asfloat(cfg.w);\n"
-    "  z.o = asfloat((asuint(k >= 0.99 ? 1e29 : iz / (1.0 - k)) & ~0x1FFFu) | ((i.a.z >> 16) & 0x1FFFu));\n"
+    "  z.o = asfloat((asuint(k >= 0.99 ? 1e29 : iz / (1.0 - k)) & ~0x1FFFu) | OZID(i));\n"
     "  return z;\n"
     "}\n"
     "OZ ps_oc(P i) { OT t = ps_test(i); OZ z; z.d = t.d; z.o = 0; return z; }\n"
@@ -212,7 +218,7 @@ static const char hw_src[] =
     "#endif\n"
     "float ps_owe(P i) : SV_Target0 {\n"
     "  O t = shade(i); float iz = i.p.z * 64.0, k = iz * asfloat(cfg.w);\n"
-    "  return asfloat((asuint(k >= 0.99 ? 1e29 : iz / (1.0 - k)) & ~0x1FFFu) | ((i.a.z >> 16) & 0x1FFFu));\n"
+    "  return asfloat((asuint(k >= 0.99 ? 1e29 : iz / (1.0 - k)) & ~0x1FFFu) | OZID(i));\n"
     "}\n"
     "float ps_oce(P i) : SV_Target0 { O t = shade(i); return 0; }\n"
     "float ps_ome(P i) : SV_Target0 { O t = shade(i); return rmark(i); }\n"
@@ -387,6 +393,7 @@ static int early_z(void) { static int z = -1; if (z < 0) { const char *e = geten
 int gpu_room_obj(void);
 float gpu_room_obj_k(void);
 float gpu_floor_k(void);
+int gpu_propsort(void);
 int gpu_aniso(void);                    /* gpu.c: opt.aniso, most anisotropic taps (1 = off) */
 int gpu_room_obj_wnt(void);
 int gpu_room_obj_span(void);
@@ -903,7 +910,7 @@ static void set_pass(int pass) {
     const int an = gpu_aniso();
     struct { float rt[4]; uint32_t cfg[4]; float ex[4]; uint32_t cf2[4]; } c = { { 2.0f / W, 2.0f / H, 1.0f / S, 0.5f / S }, { (uint32_t)S, (uint32_t)pass, 0, 0 },
                                                                  { gpu_room_obj_k(), 64.0f * S * gpu_depth_slope(), (float)gpu_room_obj_span(), gpu_floor_k() },
-                                                                 { (uint32_t)(an > 1 ? an : 1), (uint32_t)aniso_show(), 0, 0 } };
+                                                                 { (uint32_t)(an > 1 ? an : 1), (uint32_t)aniso_show(), (uint32_t)gpu_propsort(), 0 } };
     float k = gpu_depth_k(), k2 = gpu_objsort_k();
     memcpy(&c.cfg[2], &k, 4);
     memcpy(&c.cfg[3], &k2, 4);
