@@ -55,6 +55,7 @@ extern uint32_t gte_world_n;                           /* GTE points of room geo
 extern int gpu_world_frame;                            /* 1 = the frame being drawn shows the 3D world (hw.c layer_note) */
 extern int gte_dcls;                                   /* kind of geometry the GTE projects now (hooks.c) */
 extern uint32_t gte_backface_frame;                    /* present_count when room back faces are drawn (hooks.c, eye over the wall) */
+void gpu_backface_note(const int16_t sxy[3][2]);        /* gte.c NCLIP: this screen triangle was a back face we let through */
 extern int gte_obj_backface;                           /* prop being drawn gets back faces (hooks.c dcls_run, tree backs) */
 int hooks_pkt_room(void);   /* hooks.c: this frame's draw packets still under the extra-faces budget */
 int hooks_pkt_full(void);   /* hooks.c: this frame's draw packets near the end of the game's ring (drop faces) */

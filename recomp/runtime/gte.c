@@ -509,9 +509,9 @@ void gte_op(uint32_t op) {
            gte_backface_frame during this frame's room traversal), room faces seen from behind are drawn too (the
            far side of hedges seen from above). Rooms only; objects, HUD and the game's own camera untouched.
            RUGRATS_BACKFACE=0 = off. */
-        if (v < 0 && gte_dcls == DCLS_ROOM && gte_backface_frame == present_count && hooks_pkt_room()) v = -v;
+        if (v < 0 && gte_dcls == DCLS_ROOM && gte_backface_frame == present_count && hooks_pkt_room()) { v = -v; gpu_backface_note(SXY); }
         /* Tree backs (2026-11-14): props (not characters) in the gap-table levels, see hooks.c dcls_run. */
-        if (v < 0 && gte_dcls == DCLS_OBJ && gte_obj_backface && hooks_pkt_room()) v = -v;
+        if (v < 0 && gte_dcls == DCLS_OBJ && gte_obj_backface && hooks_pkt_room()) { v = -v; gpu_backface_note(SXY); }
         /* Packet ring nearly full this frame (hooks.c hooks_pkt_full, Reptar 2010 crash): drop further room / object
            faces rather than let the frame overrun the game's packet ring (corrupt list, crash). */
         if (v > 0 && (gte_dcls == DCLS_ROOM || gte_dcls == DCLS_OBJ) && hooks_pkt_full()) v = 0;

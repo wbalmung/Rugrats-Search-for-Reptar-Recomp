@@ -1370,6 +1370,7 @@ static void tri_t(const St *st, const Tgt *T, int band, int nb, Vtx a, Vtx b, Vt
                 else if ((dm == DM_TEST || dm == DM_TW) && zrow[x] == 0) px = 0x7C1F;
             }
             *p = px | (st->mask_set ? 0x8000 : 0);
+            if (dbg && x == dbx && y == dby) rt_logf("  written %04x dm %d iz %.4f zrow %.4f\n", px, dm, fz, zrow ? zrow[x] : 0.0f);
         }
     }
     #undef EDGE
@@ -2780,6 +2781,46 @@ static void tri_attr(const Vtx *const t[3], double x, double y, Vtx *w) {
 }
 
 unsigned fp_poly;   /* RUGRATS_FRAMEPROF: polygons this present (host_win32.c) */
+/* back faces the GTE let through this frame (see "Back faces behind front faces" in exec_poly): screen triangles
+   keyed by their three corner words (packet format y << 16 | x, 11 bits each), any order */
+enum { BF_N = 8192, BF_PROBE = 16 };
+static struct { uint32_t a, b, c, gen; } bf_tab[BF_N];
+static uint32_t bf_last = 0x80000000u;   /* present_count of the last note */
+static void bf_key(uint32_t *a, uint32_t *b, uint32_t *c) {
+    uint32_t t;
+    *a &= 0x07FF07FFu; *b &= 0x07FF07FFu; *c &= 0x07FF07FFu;
+    if (*a > *b) { t = *a; *a = *b; *b = t; }
+    if (*b > *c) { t = *b; *b = *c; *c = t; }
+    if (*a > *b) { t = *a; *a = *b; *b = t; }
+}
+static uint32_t bf_hash(uint32_t a, uint32_t b, uint32_t c) {
+    return (uint32_t)(((a * 0x9E3779B1u) ^ (b * 0x85EBCA77u) ^ (c * 0xC2B2AE3Du)) * 0x27D4EB2Fu) >> 19;   /* 13 bits */
+}
+void gpu_backface_note(const int16_t sxy[3][2]) {
+    uint32_t a = (uint16_t)sxy[0][1] << 16 | (uint16_t)sxy[0][0], b = (uint16_t)sxy[1][1] << 16 | (uint16_t)sxy[1][0],
+             c = (uint16_t)sxy[2][1] << 16 | (uint16_t)sxy[2][0];
+    bf_key(&a, &b, &c);
+    const uint32_t h = bf_hash(a, b, c);
+    int best = -1; uint32_t oldest = 0;
+    for (int i = 0; i < BF_PROBE; i++) {
+        const int j = (int)((h + (uint32_t)i) & (BF_N - 1));
+        const uint32_t age = present_count - bf_tab[j].gen;
+        if (bf_tab[j].a == a && bf_tab[j].b == b && bf_tab[j].c == c) { best = j; break; }
+        if (age > 2u) { best = j; break; }
+        if (best < 0 || age > oldest) { best = j; oldest = age; }
+    }
+    bf_tab[best].a = a; bf_tab[best].b = b; bf_tab[best].c = c; bf_tab[best].gen = present_count;
+    bf_last = present_count;
+}
+static int bf_seen(uint32_t a, uint32_t b, uint32_t c) {
+    bf_key(&a, &b, &c);
+    const uint32_t h = bf_hash(a, b, c);
+    for (int i = 0; i < BF_PROBE; i++) {
+        const int j = (int)((h + (uint32_t)i) & (BF_N - 1));
+        if (bf_tab[j].a == a && bf_tab[j].b == b && bf_tab[j].c == c && present_count - bf_tab[j].gen <= 2u) return 1;
+    }
+    return 0;
+}
 static void exec_poly(uint32_t *f) {
     int op = f[0] >> 24;
     poly_seq++; fp_poly++;
@@ -3052,6 +3093,41 @@ static void exec_poly(uint32_t *f) {
         if (nworld < 2) nworld = 0;   /* one corner on a world point's pixel can be chance (the cookie box once) */
         if (nworld) hud_3d++;
         if (!dm) dm = nworld ? DM_HTEST : (!semi_on && hud_3d >= 64 && hud_like(f, vi, nv, tex) ? DM_HUD : DM_NONE);
+    }
+    /* Back faces behind front faces (2026-11-20, user: Reptar 2010, stick camera tilted down, black bars along the
+       balcony slabs; then a grey bar at a storefront). While back faces are drawn (gte.c NCLIP: room faces with the
+       eye over the wall, prop faces in back-face levels), a back face sits a little behind front faces (balcony slab
+       ~140 units behind its front, sampling a black texel at its tile edge; a storefront prop face ~40 units behind
+       the wall) and the depth tests let through anything within the gap (+ the front face's slope bias), so it
+       painted over them. Every triangle the GTE let through as a back face is noted (gpu_backface_note); a room or
+       object polygon whose corners match one gets its depth pushed back by four gaps (iz / (1 + 4 k iz), 384 units;
+       two still left a 1 px line): the tests then hide it wherever anything not clearly behind it is drawn, and it
+       still covers empty / far areas (hedge backs, roofless buildings, tree backs). Both renderers (per-vertex
+       depth). RUGRATS_BACKZ=0 = off, =<n> = push by n gaps. */
+    if ((dm == DM_WRITE || dm == DM_WNT || dm == DM_TEST || dm == DM_TW) && present_count - bf_last <= 2u) {
+        static int bz = -1;
+        static float bzk = 4.0f;
+        if (bz < 0) { const char *e = getenv("RUGRATS_BACKZ"); bz = e ? atoi(e) != 0 : 1; if (e && atof(e) > 0) bzk = (float)atof(e); }
+        int hit = 0;
+        if (bz && (dm == DM_WRITE || dm == DM_WNT) && present_count - gte_backface_frame <= 2u) {
+            /* room: wound backwards on screen. The game subdivides big room faces after NCLIP (balcony slab: its
+               pieces matched no noted triangle), but room faces are never double-sided, so the winding is exact */
+            const int64_t w = (int64_t)(v[1].x - v[0].x) * (v[2].y - v[0].y) - (int64_t)(v[2].x - v[0].x) * (v[1].y - v[0].y);
+            hit = w < 0;
+        } else if (bz && (dm == DM_TEST || dm == DM_TW)) {
+            /* props: exact corner match (props do have double-sided faces, wound either way) */
+            static const int tri[4][3] = { { 0, 1, 2 }, { 1, 2, 3 }, { 0, 1, 3 }, { 0, 2, 3 } };
+            for (int t = 0; t < (nv == 4 ? 4 : 1) && !hit; t++)
+                hit = bf_seen(f[vi[tri[t][0]]], f[vi[tri[t][1]]], f[vi[tri[t][2]]]);
+        }
+        if (hit) {
+            const float k2 = bzk * gpu_depth_k();
+            for (int k = 0; k < nv; k++) {
+                v[k].iz = v[k].iz / (1.0f + k2 * v[k].iz);
+                if (v[k].izn > 0) v[k].izn = v[k].izn / (1.0f + k2 * v[k].izn);
+            }
+            if (gpu_cmdlog) rt_logf("   backz: back face, depth pushed back\n");
+        }
     }
     for (int k = 0; k < nv; k++) v[k].dm = dm;
     glass_cur = 0;

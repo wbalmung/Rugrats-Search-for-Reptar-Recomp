@@ -525,7 +525,10 @@ logs every list packet with its layer and each frame's room point count.
   `RUGRATS_PKTLOG=1` logs each frame's use, each list send and the ring move. Saves made with this build point the
   ring into the extension, so older builds must not load them. (`RUGRATS_BACKFACEALL=0` / `RUGRATS_TREEBACK=0` / `RUGRATS_GAPCOLOR=0` = off).
   In those frames, in levels with a gap colour (the hedge maze), room faces seen from behind are drawn too (the far
-  sides of the hedges; `RUGRATS_BACKFACE=0` = off, `2` = every level) and the background clear takes the level's gap
+  sides of the hedges; `RUGRATS_BACKFACE=0` = off, `2` = every level; such a face only shows where nothing near it is
+  already drawn: its depth is pushed back by four depth gaps, so it can't paint over the front of the same wall, ledge
+  or prop, e.g. black bars along the Reptar 2010 balconies, a grey bar at a storefront; `RUGRATS_BACKZ=0` = off,
+  `=<n>` = n gaps) and the background clear takes the level's gap
   colour (hedge tops the game never
   modelled; Grandpa's Teeth = dark hedge green; `RUGRATS_GAPCOLOR=<rrggbb>` = that colour everywhere, `0` = off; the maze's
   night-purple out-of-bounds colour is canopy green in every frame).
