@@ -4790,3 +4790,26 @@ void hooks_dbg_set_bars(int want) {
     rt_logf("debug: bars %d (wanted %d)\n", hooks_dbg_bars(), want);
 }
 
+
+/* Earning a piece (80091d50, from 80091e0c when 15 bars are held): picks random pieces 0..11 until one is not yet
+   earned, EXCEPT when bit 0x200 of the progress word 0x800C56A8 is set (the final level's ending sets it, 8007b748:
+   "game beaten"; also makes the hub TV go to the final level, 8004d3f0): then the first pick counts even if already
+   earned. On the PS1 that only happens with all 12 earned. After the Debug page lowered the pieces on a finished save
+   (user, 2026-11-23: 11 of 12, 14 bars), the 12th earn re-picked an owned piece: no new piece, nothing to place.
+   Here, while fewer than 12 pieces are earned, the bit is hidden for that call (put back after), so a missing piece is
+   always picked; with 12 (or the bit clear) the function runs untouched. */
+static int earn_in;
+void f_80091d50(void);
+int rt_hook_80091d50(void) {
+    const uint32_t fl = mem_r32(0x800C56A8u);
+    if (earn_in || !(fl & 0x200u) || hooks_dbg_pieces() >= 12) return 0;
+    const uint32_t before = mem_r16(0x800C56BCu);
+    mem_w32(0x800C56A8u, fl & ~0x200u);
+    earn_in = 1;
+    f_80091d50();
+    earn_in = 0;
+    mem_w32(0x800C56A8u, mem_r32(0x800C56A8u) | 0x200u);
+    rt_logf("puzzle: earned pieces %03x -> %03x (game-beaten flag hidden for the pick)\n", before,
+            mem_r16(0x800C56BCu));
+    return 1;
+}

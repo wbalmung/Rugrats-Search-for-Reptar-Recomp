@@ -786,6 +786,11 @@ only" and ignore changes. Progress RAM (hooks.c `hooks_dbg_*`): pieces earned bi
 Fewer bars = spend held ones (spare first); more = unspend spent ones, then mark bars taken in db 8 (leftover level)
 and db 19 (unused), so no real bar ever disappears from a level. Fewer pieces = unplaced pieces go first (highest
 first), then placed ones; more = the lowest unearned pieces, unplaced. The memory card save keeps whatever is set.
+Finished saves: bit 0x200 of `0x800C56A8` ("game beaten", set by the final level's ending `8007b748`; also sends the hub
+TV straight to the final level) makes the piece pick `80091d50` accept an already-earned piece, harmless on the PS1
+(only reachable with all 12). With pieces lowered here, the next earn re-picked an owned piece (no piece to place).
+Hook `rt_hook_80091d50`: while fewer than 12 are earned, that bit is hidden for the pick only, so a missing piece is
+always chosen (logs `puzzle: earned pieces ...`).
 Freecam (Debug page, Off / On, not saved): detaches the camera; the player stands still because the game gets no pad
 buttons while it is engaged (`host_pad_buttons`; only while the gameplay camera ran in the last 0.5 s, so menus,
 cutscenes and the title keep their input). Up / Down fly along the view, Left / Right strafe, right stick or J L I K
