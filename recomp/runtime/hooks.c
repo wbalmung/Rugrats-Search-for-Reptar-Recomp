@@ -4298,11 +4298,21 @@ int rt_hook_8007013c(void) { sfx_log("013c"); return 0; }
    (frames of 15 and 10 ticks), so it showed 20.7 feathers/s (~21 on screen); the port fired every 10 ticks at any
    frame rate = 30/s. Fix: spawn only once 14.5 ticks (1/20.7 s) of game time have built up since the last feather
    (the ticks the timer pass hands the callback); skipped calls return 0 (the helper ignores the result).
-   RUGRATS_FEATHERS=0 = old 30/s, RUGRATS_PARTLOG=1 logs every particle spawn. */
+   RUGRATS_FEATHERS=0 = old 30/s, RUGRATS_PARTLOG=1 logs every particle spawn.
+   Reptar's fire breath (Reptar 2010, 2026-11-23, user: "the particle effect for his fire looks broken"): the breath
+   (ra 8005ce64) spawns one fire particle per game frame, each with an animated sprite (80086114 type 3 -> 8008a22c,
+   sprite 0x1017) from a pool of 32. The PS1 runs that scene at ~9.8 game fps (PCSX-Redux replay of the user's save:
+   8 spawns in 44 vsyncs, one per game frame), so a breath made ~8 particles; the port made one per drawn frame (64 at
+   120 fps). Past 32 the sprite allocation fails, those particles keep empty texture fields and draw as quads with
+   palette 0 / texture page 0 / uv 0 = the top-left screen pixels, added (semi mode 1) about 100-175 times = the
+   white blob, plus the game's 150-packet cap left gaps. Fix: same game-time gate as the feathers, one fire particle
+   per 300/9.8 ticks. RUGRATS_FIRERATE=0 = old (one per frame). */
+static double fire_acc;
 int rt_hook_8008864c(void) {
-    static int lg = -1, on = -1;
+    static int lg = -1, on = -1, fon = -1;
     if (lg < 0) lg = getenv("RUGRATS_PARTLOG") != NULL;
     if (on < 0) { const char *e = getenv("RUGRATS_FEATHERS"); on = !(e && *e == '0'); }
+    if (fon < 0) { const char *e = getenv("RUGRATS_FIRERATE"); fon = !(e && *e == '0'); }
     const uint32_t ticks = mem_r32(0x800C3E80u + 156);
     const int32_t db = (int32_t)mem_r32(0x800C5678u);
     int skip = 0;
@@ -4311,6 +4321,15 @@ int rt_hook_8008864c(void) {
         feather_acc += ticks > 40 ? 40 : ticks;
         if (feather_acc < ref) skip = 1;
         else { feather_acc -= ref; if (feather_acc > ref) feather_acc = 0; }   /* no bursts after a pause */
+    }
+    if (fon && cpu.r[31] == 0x8005ce64u) {   /* Reptar's fire breath */
+        const double ref = 300.0 / 9.8;
+        static uint32_t last;
+        if (hooks_frame() - last > 30u) fire_acc = ref;                  /* new breath: its first particle at once */
+        last = hooks_frame();
+        fire_acc += ticks > 40 ? 40 : ticks;
+        if (fire_acc < ref) skip = 1;
+        else { fire_acc -= ref; if (fire_acc > ref) fire_acc = 0; }   /* no bursts */
     }
     if (lg) rt_logf("part f%u ra %08x up %08x desc %08x type %08x ticks %u db %d%s\n", present_count, cpu.r[31],
                     mem_r32(cpu.r[29] + 0x18u), cpu.r[4], mem_r32(cpu.r[4]), ticks, (int)db, skip ? " skip" : "");

@@ -1062,6 +1062,16 @@ showed 20.7 feathers/s; the port showed 30/s at every frame rate. The `8008864c`
 lets a feather through only once 14.5 ticks (1/20.7 s) of game time have built up. Measured: 20.7 feathers/s at
 30, 60, 120 and 150 fps.
 
+Reptar's fire breath (Reptar 2010, always on; `RUGRATS_FIRERATE=0` = old): the breath (call at `8005ce64`) spawns one
+fire particle per game frame through `8008864c`; each gets an animated sprite (`80086114` type 3 -> `8008a22c`,
+sprite 0x1017) from a pool of 32 slots. The PS1 runs that scene at ~9.8 game fps (PCSX-Redux replay of a user save:
+8 spawns per breath, one per game frame); the port spawned one per drawn frame (64 per breath at 120 fps). Past 32
+the sprite allocation fails, and those particles drew with empty texture fields: texture page 0 / palette 0 / uv 0 =
+the top-left screen pixels, additive, 100+ times = a white blob over the fire, and the game's 150-packet cap left
+gaps where buildings and trees vanished. The same game-time gate as the feathers now lets one fire particle through
+per 300/9.8 ticks (first one of a breath at once). Measured: 7-9 particles per breath at 30, 60, 120 and 144 fps, at
+most ~50 fire packets (Redux: 42-45), no empty ones.
+
 Golf aim speed (Game page, ini `[game] golf_aim`, default 100): in the golf holes the game turns the aim a fixed
 step every game frame, so at 120 fps it turned 4x as fast as on a PS1 (30 game fps). The fix scales that step by the
 real time step; the value is a percent of the PS1 speed (25 / 50 / 75 / 100 / 150 / 200), 0 = "Uncorrected" (old
