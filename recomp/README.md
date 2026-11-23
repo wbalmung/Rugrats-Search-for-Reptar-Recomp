@@ -958,6 +958,15 @@ shorter one inside it (hit), so the walk body's low-speed branch (`80058da4`, `8
 old start point `obj+0x104/0x10c` at the bottom: endless hop while the stick was held. The hook gives the player's
 probe max(ticks, 10) for the duration of the call (real value restored after).
 
+Step-down hop (2026-11-21, always on; `RUGRATS_HOPFIX=0` = original, `RUGRATS_HOPLOG=1`): walking down stairs (hub),
+the movement step `800645d8` sets state 4 (hop, handler `8005f1b4`) when its floor probe sees the drop, ~150 units
+before the edge. At 30 fps that frame also moves the player 170 units, past the edge. At 144 fps only 34: the hop's
+collision (`8005ee78`, `80066014` result 2) finds ground at once, so a full landing (state 10) played on the upper step
+and the real hop a few frames later: two hop + land animations per step (28 instead of 12 on the hub stairs; 60 fps:
+some steps). The hook lets the walk -> hop change through only once the consecutive frames it fired add up to 10 real
+ticks (tick ring `0x800CE0B8[gp+154]`, since gp+156 reads 10 inside the probe, see above); until then the object keeps
+its state and walks on. 30 fps: passes on the first frame (unchanged).
+
 Damage cooldown (always on; `RUGRATS_DMGCOOL=<ms>`, default 400, 0 = original; `RUGRATS_DMGLOG=1` logs every
 damage event): `80077864(msg)` is the damage event (msg+4 = object, msg+0x10 = other object, damaged when set,
 msg+0x14 = amount, negative heals). It subtracts from health `obj+0x1a4` (s16, 0..255, 0 = `8007fd0c` death) and runs

@@ -86,6 +86,7 @@ HOOKS = {
     0x8006f3a4: "sound effect wrapper: sfx debug log",
     0x8006f438: "sound effect wrapper: sfx debug log",
     0x8006f644: "sound effect play (positional?): sfx debug log",
+    0x800645d8: "movement step (floor probe, walk -> hop state 4): hop held until 10 ticks of firing frames (stairs double hop at high fps)",
     0x80070064: "sound effect wrapper: sfx debug log",
     0x8007013c: "sound effect wrapper: sfx debug log",
     0x80064a34: "movement collision probe (obj, mode): player probe sees >= 10 ticks (PS1 look-ahead; high fps ledge hop loop)",

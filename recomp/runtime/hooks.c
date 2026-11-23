@@ -4065,6 +4065,46 @@ int rt_hook_8007412c(void) {
     cpu.r[2] = v0;
     return 1;
 }
+/* Step-down hop (2026-11-21, user: hub stairs, Tommy's step-down animation plays twice per step at high fps).
+   Movement step 800645d8(obj) moves by dir * speed * ticks, probes the floor and, when its classifier 80064444 says
+   "drop ahead" (case -> L_8006479c), sets state 4 (hop / fall, handler 8005f1b4). The check fires ~150 units before
+   the step edge. At 30 fps that frame also carries Tommy 170 units, past the edge, and the hop drops onto the next
+   step. At 144 fps he is only 34 units further, still over the upper step: the hop's collision (8005ee78 -> 80066014
+   result 2) reports ground at once, state 10 (land, full landing animation), idle, walk, and a few frames later the
+   real hop: two hop + land animations per step (60 fps: on some steps). Fix: the walk -> hop change is let through
+   only once the consecutive frames where it fired add up to one 30 fps frame of game time (10 ticks, gp+156); before
+   that the object stays in its state and walks on. At 30 fps (10 ticks per frame) the first frame passes: unchanged.
+   The player's probe already runs with ticks raised to 10 (rt_hook_80064a34, ledge-hop loop fix), so it looks a 30 fps
+   step ahead: the frame's real ticks come from the game's tick ring 0x800CE0B8[gp+154] (written by rt_hook_8001ce48).
+   RUGRATS_HOPFIX=0 = original; RUGRATS_HOPLOG=1 logs held / passed hops. */
+void f_800645d8(void);
+int rt_hook_800645d8(void) {
+    static int on = -1, lg, inside;
+    static uint32_t h_obj[8], h_acc[8], h_stamp[8];
+    if (on < 0) { const char *e = getenv("RUGRATS_HOPFIX"); on = e ? atoi(e) != 0 : 1; { const char *g = getenv("RUGRATS_HOPLOG"); lg = g ? atoi(g) : 0; } }
+    if (inside || !on || !opt.fixed_timestep) return 0;
+    const uint32_t obj = cpu.r[4];
+    const uint8_t st0 = mem_r8(obj + 0x18c);
+    inside = 1; f_800645d8(); inside = 0;
+    const uint8_t st1 = mem_r8(obj + 0x18c);
+    if (lg > 1 && obj == 0x800E2B48u) rt_logf("hopc f%u st %u->%u ticks %u x %d ra %08x\n", present_count, st0, st1,
+                                         mem_r32(0x800C3E80u + 156), (int32_t)mem_r32(obj + 0x18), cpu.r[31]);
+    int k = -1, fr = -1;
+    for (int i = 0; i < 8; i++) { if (h_obj[i] == obj) k = i; if (fr < 0 && (!h_obj[i] || present_count - h_stamp[i] > 2)) fr = i; }
+    if (st1 != 4 || st0 == 4) { if (k >= 0) h_obj[k] = 0; return 1; }   /* no hop started this frame */
+    if (k < 0) { k = fr >= 0 ? fr : 0; h_obj[k] = obj; h_acc[k] = 0; }
+    else if (present_count - h_stamp[k] > 1) h_acc[k] = 0;              /* not consecutive frames: start over */
+    h_stamp[k] = present_count;
+    h_acc[k] += mem_r32(0x800CE0B8u + (mem_r16(0x800C3E80u + 154) & 31) * 4);   /* real ticks (gp+156 is 10 here, 80064a34) */
+    if (h_acc[k] >= 10) {
+        if (lg) rt_logf("hop f%u obj %08x passed after %u ticks x %d\n", present_count, obj, h_acc[k], (int32_t)mem_r32(obj + 0x18));
+        h_obj[k] = 0;
+        return 1;
+    }
+    mem_w8(obj + 0x18c, st0);   /* held: keeps walking this frame */
+    if (lg) rt_logf("hop f%u obj %08x held (%u ticks) x %d\n", present_count, obj, h_acc[k], (int32_t)mem_r32(obj + 0x18));
+    return 1;
+}
 int rt_hook_8006f2fc(void) { sfx_log("f2fc"); return 0; }
 int rt_hook_8006f3a4(void) { sfx_log("f3a4"); return 0; }
 int rt_hook_8006f438(void) { sfx_log("f438"); return 0; }
