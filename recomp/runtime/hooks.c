@@ -1475,7 +1475,7 @@ void f_800211e8(void);
    while the freecam is engaged (gameplay camera seen in the last 0.5 s), so the player stands still; menus, cutscenes
    and the title keep their input. Controls (host_pad_raw, so key / pad bindings apply): Up / Down = fly along the view,
    Left / Right = strafe, right stick (J L I K) = look, R1 / L1 = up / down, Cross held = x4, Square held = x1/4.
-   Starts at the current camera eye and direction (again after a level change or cutscene: gameplay camera gone > 1 s). Debug: RUGRATS_FREECAM=1 turns it on from the start (tests),
+   No collision: see rt_hook_8002b660 (the game's eye clamp is skipped). Starts at the current camera eye and direction (again after a level change or cutscene: gameplay camera gone > 1 s). Debug: RUGRATS_FREECAM=1 turns it on from the start (tests),
    RUGRATS_FCLOG=1 logs the eye every game frame. */
 int hooks_freecam;
 static uint32_t fc_seen = 0x80000000u;  /* vblank of the last gameplay camera update */
@@ -1553,6 +1553,23 @@ static int fc_lookat(uint32_t cam) {
     f_800211e8();                /* the original: its side effects (GTE registers, stack) */
     rcam_in_lookat = 0;
     fc_matrix(m, fc_eye, tg);
+    return 1;
+}
+
+/* No collision for the freecam: after the camera update (80029df0 -> 8002b660 at ra 80029e20) the game asks which
+   room holds the eye; -1 (inside a wall, outside the house) makes it CLAMP cam+0x14 (the eye the frame is drawn from)
+   into the box of room cam+0x80, which pulled the view back while the direction stayed ours. While the freecam runs,
+   -1 from that call is answered with the hint room (a1 = cam+0x80): no clamp, the level keeps drawing from the last
+   room the eye was in; a real room is passed through (so cam+0x80 follows the eye into rooms). */
+static int fc_in_room;
+void f_8002b660(void);
+int rt_hook_8002b660(void) {
+    if (fc_in_room || !(hooks_freecam && fc_on) || cpu.r[31] != 0x80029e20u) return 0;
+    const uint32_t hint = cpu.r[5];
+    fc_in_room = 1;
+    f_8002b660();
+    fc_in_room = 0;
+    if ((int32_t)cpu.r[2] == -1 && (int32_t)hint >= 0) cpu.r[2] = hint;
     return 1;
 }
 

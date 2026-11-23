@@ -56,6 +56,7 @@ HOOKS = {
     0x80049eec: "hub level-name label timer callback (draws the text, then 80050fd0 sparkles)",
     0x80050fd0: "portal sparkle spawn: skipped while the label is only being redrawn",
     0x800211e8: "LookAt(eye*, target*, matrix*): right-stick camera orbits the eye (only from 8001e838 via 80029df0)",
+    0x8002b660: "room holding a point (eye*, hint room): Debug Freecam never gets -1 from the camera update (no eye clamp)",
     0x800818e0: "per-level idle voice line (chatter) timer, gp+0xe40: chatter option stretches / stops it",
     0x8008da4c: "play XA voice line (a0 = id): Restored Lines swaps idle chatter picks for never-used lines",
     0x8007a9d8: "golf hole finished (a0 = player): Golf Reactions plays the score / fail line first, then runs it",
