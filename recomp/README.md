@@ -967,6 +967,13 @@ some steps). The hook lets the walk -> hop change through only once the consecut
 ticks (tick ring `0x800CE0B8[gp+154]`, since gp+156 reads 10 inside the probe, see above); until then the object keeps
 its state and walks on. 30 fps: passes on the first frame (unchanged).
 
+Spinning props seen from another room (2026-11-21, always on; `RUGRATS_SPINFAR=0` = original, `RUGRATS_FANLOG=1` also
+logs these as "spinfar"): the room system deactivates the objects of rooms the player has left (`80049e5c`: removes the
+object's timer, clears obj+0 bit 0), and the spinner callback `8004e2ac` runs on that timer, so the hub kitchen ceiling
+fan stopped while still in view through the doorway (walking away from the kitchen). Now, whenever an inactive object
+with the spinner callback is drawn, its angles get what the callback would add (speeds x vblanks since obj+0x64) and
+obj+0x64 is updated, so nothing jumps when the room comes back. The Let There Be Light still-fan rule still applies.
+
 Damage cooldown (always on; `RUGRATS_DMGCOOL=<ms>`, default 400, 0 = original; `RUGRATS_DMGLOG=1` logs every
 damage event): `80077864(msg)` is the damage event (msg+4 = object, msg+0x10 = other object, damaged when set,
 msg+0x14 = amount, negative heals). It subtracts from health `obj+0x1a4` (s16, 0..255, 0 = `8007fd0c` death) and runs

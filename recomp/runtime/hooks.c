@@ -2625,6 +2625,7 @@ static void near_begin(uint32_t obj) {
 int rt_hook_80031b84(void) {
     static int in;
     if (!in) { void hooks_night_obj(uint32_t obj); hooks_night_obj(cpu.r[4]); }   /* "Let There Be Light" Fixes */
+    if (!in) { void hooks_spin_far(uint32_t obj); hooks_spin_far(cpu.r[4]); }     /* spinners in inactive rooms */
     const int r = obj_draw(f_80031b84, &in, DCLS_OBJ);
     if (r) { near_pass = 0; near_hide = 0; near_slot = -1; }
     return r;
@@ -2837,6 +2838,7 @@ int rt_hook_80010174(void) { static int in; if (in || !(near_pass || pair_model)
 int rt_hook_8003205c(void) {
     static int in;
     if (!in) { void hooks_night_obj(uint32_t obj); hooks_night_obj(cpu.r[4]); }   /* "Let There Be Light" Fixes */
+    if (!in) { void hooks_spin_far(uint32_t obj); hooks_spin_far(cpu.r[4]); }     /* spinners in inactive rooms */
     return obj_draw(f_8003205c, &in, DCLS_OBJ);
 }
 /* Object near cull in widescreen (2026-11-14, user: kitchen counter cabinet popping at the left screen edge while
@@ -4185,16 +4187,9 @@ int rt_hook_8008864c(void) {
    never saw it, e.g. after loading a state saved with the fan stopped). */
 #define FAN_DB    12
 #define FAN_MODEL 94u
-int rt_hook_8004e2ac(void) {
+static int spin_lg = -1;   /* debug: RUGRATS_FANLOG=1 logs each spinner call (db, obj, model, speeds, angles) */
+static void fan_rule(uint32_t obj) {
     static int16_t spd[3] = {32, 0, 0};   /* the fan's own speeds (last seen non-zero) */
-    const uint32_t obj = cpu.r[4];
-    static int lg = -1;   /* debug: RUGRATS_FANLOG=1 logs each spinner call (db, obj, model, speeds, angles) */
-    if (lg < 0) lg = getenv("RUGRATS_FANLOG") != NULL;
-    if (lg)
-        rt_logf("spin f%u db %d obj %08x model %u speed %d,%d,%d angle %u,%u,%u\n", present_count,
-                (int)mem_r32(0x800C5678u), obj, mem_r16(obj + 0x96), (int16_t)mem_r16(obj + 0x2c),
-                (int16_t)mem_r16(obj + 0x2e), (int16_t)mem_r16(obj + 0x30), mem_r16(obj + 0x24), mem_r16(obj + 0x26),
-                mem_r16(obj + 0x28));
     if ((int32_t)mem_r32(0x800C5678u) == FAN_DB && (obj >> 24) == 0x80u && mem_r16(obj + 0x96) == FAN_MODEL) {
         const int moving = mem_r16(obj + 0x2c) | mem_r16(obj + 0x2e) | mem_r16(obj + 0x30);
         if (opt.light_fixes && opt.fan_still) {
@@ -4205,7 +4200,47 @@ int rt_hook_8004e2ac(void) {
             for (int i = 0; i < 3; i++) mem_w16(obj + 0x2c + 2 * i, (uint16_t)spd[i]);
         }
     }
+}
+int rt_hook_8004e2ac(void) {
+    const uint32_t obj = cpu.r[4];
+    if (spin_lg < 0) spin_lg = getenv("RUGRATS_FANLOG") != NULL;
+    if (spin_lg)
+        rt_logf("spin f%u db %d obj %08x model %u speed %d,%d,%d angle %u,%u,%u\n", present_count,
+                (int)mem_r32(0x800C5678u), obj, mem_r16(obj + 0x96), (int16_t)mem_r16(obj + 0x2c),
+                (int16_t)mem_r16(obj + 0x2e), (int16_t)mem_r16(obj + 0x30), mem_r16(obj + 0x24), mem_r16(obj + 0x26),
+                mem_r16(obj + 0x28));
+    fan_rule(obj);
     return 0;
+}
+
+/* ---- Spinning props keep spinning when seen from another room (2026-11-21, user: hub, walk away from the kitchen
+   holding Down, the ceiling fan stops while still in view) -------------------------------------------------------
+   The room system deactivates the objects of rooms the player has left: 80049e5c removes the object's timer
+   (obj+0x9c) and clears obj+0 bit 0 (80049e18 sets both again). The spinner callback 8004e2ac lives on that timer,
+   so the fan froze although the kitchen is still visible through the doorway (same on a PS1; more visible in
+   widescreen). Here, whenever such an object is drawn (object draw 80031b84 / 8003205c) while inactive and its
+   callback is the spinner, its angles get what the callback would have added: s16 speeds obj+0x2c/2e/30 x vblanks
+   (counter 0x800BCB60 = VSync(-1)) since obj+0x64, and obj+0x64 is set to now, exactly like the callback, so when
+   the timer comes back there is no jump. Only the spin part: not the sound / player-interaction branches or the
+   obj+0x50 extra callback. All state is game RAM (save states need nothing new). The Let There Be Light still fan
+   rule applies here too. RUGRATS_SPINFAR=0 = off. */
+void hooks_spin_far(uint32_t obj) {
+    static int on = -1;
+    if (on < 0) { const char *e = getenv("RUGRATS_SPINFAR"); on = e ? atoi(e) != 0 : 1; }
+    if (!on || (obj >> 24) != 0x80u || mem_r32(obj + 0x44) != 0x8004e2acu || (mem_r32(obj) & 1u)) return;
+    fan_rule(obj);
+    const uint32_t now = mem_r32(0x800BCB60u);
+    const int32_t d = (int32_t)(now - mem_r32(obj + 0x64));
+    if (d <= 0) return;
+    for (int i = 0; i < 3; i++) {
+        const int16_t s = (int16_t)mem_r16(obj + 0x2c + 2 * i);
+        if (s) mem_w16(obj + 0x24 + 2 * i, (uint16_t)(mem_r16(obj + 0x24 + 2 * i) + s * d));
+    }
+    mem_w32(obj + 0x64, now);
+    if (spin_lg < 0) spin_lg = getenv("RUGRATS_FANLOG") != NULL;
+    if (spin_lg)
+        rt_logf("spinfar f%u obj %08x model %u +%d vbl angle %u,%u,%u\n", present_count, obj, mem_r16(obj + 0x96), d,
+                mem_r16(obj + 0x24), mem_r16(obj + 0x26), mem_r16(obj + 0x28));
 }
 
 
