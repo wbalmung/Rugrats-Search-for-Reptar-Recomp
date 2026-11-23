@@ -209,6 +209,8 @@ SETTINGS = [
      "On: music notes the game cuts off instantly fade out over a few milliseconds instead (removes the clicks)."),
     ("Enhancements", "Extended View Distance", "video", "view_ext", 2, [0, 1, 2, 3], ["Off", "Short", "Medium", "Full"],
      "Hedge maze and Reptar 2010: how far rooms seen over walls are drawn. Lower = fewer polygons, faster; far parts can then be missing. Off: original."),
+    ("Enhancements", "Smooth Cutscenes", "video", "cut_smooth", 1, BOOL, OFF_ON,
+     "On: in-engine cutscenes run at your frame rate (motion blended between the disc's 18.75 steps per second). Off: original 18.75 fps."),
     ("Enhancements", "Override Camera", "input", "rcam_override", 0, BOOL, OFF_ON,
      "On: the right-stick camera also works in levels where it is normally off (Touchdown Tommy)."),
     ("Enhancements", "Wall Bonk", "game", "wall_bonk", 1, BOOL, OFF_ON,

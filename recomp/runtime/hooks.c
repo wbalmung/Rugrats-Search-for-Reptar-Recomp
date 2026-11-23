@@ -86,11 +86,14 @@ static uint32_t frame_present;
    menu_loop() is called at the pacing hook entry. Gameplay = 8001d00c called from 8001d3e8 (return 0x8001d400)
    called from the level loop 80018c38 (return 0x80019038), the chain savestate.c chain[] checks. The intro and title
    also come through 8001d3e8, but from another loop. */
+static int cutsm_active(void);
 static int menu_loop(void) {
     static int last = -1;
     uint32_t sp = cpu.r[29];                                     /* 8001d00c's frame (0x18, ra at +0x14) */
+    const uint32_t up = mem_r32(sp + 0x18 + 0x14);
     int m = mem_r32(sp + 0x14) != 0x8001d400u ||                 /* not called from 8001d3e8 */
-            mem_r32(sp + 0x18 + 0x14) != 0x80019038u;            /* 8001d3e8 not called from the level loop */
+            (up != 0x80019038u &&                                /* 8001d3e8 not called from the level loop */
+             !(up == 0x800745dcu && cutsm_active()));            /* nor from the streamed cutscene player (smoothed) */
     {   /* debug: RUGRATS_PACELOG=1 logs the caller chain when it changes */
         static uint32_t prev;
         uint32_t r2 = mem_r32(sp + 0x18 + 0x14);
@@ -3693,15 +3696,284 @@ int rt_hook_8005e134(void) {
    8 bytes are zero is dropped (flag cleared) and we keep advancing time until a real one arrives. A real packet never
    starts with 8 zero bytes (frame number + size, or a header magic). RUGRATS_CUTPAD=0 = old behaviour.
    Debug: RUGRATS_CUTLOG=1 logs each packet taken (frame number vs counter) and each new stream header. */
+/* Smooth cutscenes (2026-11-21, user: in-engine cutscenes ran at ~18.8 fps). The stream is CD paced: one packet per
+   4 data sectors = 18.75 packets/s, and the player loop 8007424c renders once per packet. A packet (after its 0x18
+   byte header: +0 frame, +4/+8/+c camera position, +0x10/+0x14 camera quaternion as 4 x 13-bit, top 6 bits of each
+   = object / character record counts) holds only absolute transforms:
+   - objects (80073c34, 0x18 B): quaternion (w0/w1, 13-bit each) -> matrix obj+4 (8001f9fc), position +8..+10 ->
+     obj+0x18..0x20, id +0x14 (800461f4); top bits = face / anim handlers 80074ec0 / 80075304;
+   - characters (80073f08, 0x10 B + bones x 8 B): position -> obj+0x18, id +0xc, bone count +0xe; each bone = index
+     (top 6 bits) + quaternion into the skeleton (obj+0x154), then 8002b240 builds the bone matrices.
+   So between packets the loop is let run once per presented frame (the cutscene chain gets the gameplay pacing,
+   menu_loop) and each frame shows camera, objects and bones blended between the last two packets (positions lerp,
+   quaternions nlerp), t = time since the newest packet arrived (80019c88 hook) / packet interval. That shows the
+   picture one packet (~53 ms) late; face / mouth changes and sounds stay on time. Camera cut (big jump) or a frame
+   number gap: no blend. Fade-out at the end (loop s2 += 25 per pass) is undone on the extra passes so it keeps its
+   speed. Only with the real-time step on. RUGRATS_CUTSMOOTH=0 = off (old 18.75 fps); RUGRATS_CUTSMLOG=1 logs packets. */
+#define CUTP_MAX 2048
+#define CUTH 4
+static uint8_t cuth[CUTH][CUTP_MAX];       /* the last packets (copies: the CD ring gets reused), oldest first */
+static int32_t cuth_f[CUTH];               /* their frame numbers */
+static uint8_t cuth_cut[CUTH];             /* 1: camera cut / frame gap from the copy before it (no blend) */
+/* Companions of objects 0x1fe / 0x1ff (0x259 / 0x25a: the fridge door halves, flag 0x20 = drawn from the Euler angle
+   obj+0x24): 80073c34 adds 50 to their angle per packet from frame 51 (a 90-degree swing over ~20 packets). That
+   counter is per packet, not in the packet: kept per copy (value after the packet), blended like the rest, and the
+   true value is put back before the next packet so the += 50 does not drift. */
+static int16_t cuth_ang[CUTH][2]; static uint8_t cuth_angv[CUTH][2];
+static int cut_ang_i = -1, cut_ang_b;   /* the pair cut_apply is drawing (copy indices) */
+static int cutp_n;                         /* valid copies */
+#define CUTA 32
+static int32_t ca_f[CUTA]; static uint64_t ca_t[CUTA]; static int ca_n;   /* arrivals (frame, time), oldest first */
+static uint32_t cut_ready_cyc;             /* when the CD callback last set the packet-ready flag */
+static uint64_t cclk64; static uint32_t cclk32;
+static uint64_t cut_now64(void) { cclk64 += (uint32_t)(cpu.cycles - cclk32); cclk32 = cpu.cycles; return cclk64; }
+static uint32_t cutsm_last_vbl;
+static int cutsm_lg = -1;
+static int cutsm_active(void) {
+    static int on = -1;
+    if (on < 0) { const char *e = getenv("RUGRATS_CUTSMOOTH"); on = e ? atoi(e) != 0 : 1; }
+    return on && opt.fixed_timestep && opt.cut_smooth;
+}
+static uint32_t cutp_r32(const uint8_t *p, uint32_t o) { uint32_t v; memcpy(&v, p + o, 4); return v; }
+static int32_t sx13(uint32_t v) { return (int32_t)(v << 19) >> 19; }
+/* packet length from its record counts, 0 if malformed */
+static uint32_t cutp_len(uint32_t p) {
+    uint32_t n = 0x18, no = mem_r32(p + 0x10) >> 26, nc = mem_r32(p + 0x14) >> 26;
+    n += no * 0x18;
+    for (uint32_t i = 0; i < nc; i++) {
+        if (n + 0x10 > CUTP_MAX) return 0;
+        n += 0x10 + mem_r8(p + n + 0xe) * 8u;
+    }
+    return n <= CUTP_MAX ? n : 0;
+}
+static void q_unpack(uint32_t w0, uint32_t w1, int32_t q[4]) {
+    q[0] = sx13(w0); q[1] = sx13(w0 >> 13); q[2] = sx13(w1); q[3] = sx13(w1 >> 13);
+}
+/* nlerp a -> b by t, keeping b's length (the game normalises anyway; this keeps 13-bit range) */
+static void q_blend(const int32_t a[4], const int32_t b[4], double t, int32_t r[4]) {
+    double d = 0, lb = 0, o[4], lo = 0;
+    for (int i = 0; i < 4; i++) { d += (double)a[i] * b[i]; lb += (double)b[i] * b[i]; }
+    const double s = d < 0 ? -1.0 : 1.0;
+    for (int i = 0; i < 4; i++) { o[i] = s * a[i] + (b[i] - s * a[i]) * t; lo += o[i] * o[i]; }
+    const double k = lo > 0 ? sqrt(lb / lo) : 1.0;
+    for (int i = 0; i < 4; i++) {
+        double v = o[i] * k; v = v > 4095 ? 4095 : v < -4096 ? -4096 : v;
+        r[i] = (int32_t)lround(v);
+    }
+}
+static int32_t lerp32(int32_t a, int32_t b, double t) { return (int32_t)lround(a + ((double)b - a) * t); }
+static uint32_t gcall(uint32_t fn_ra, void (*fn)(void), uint32_t a0, uint32_t a1, uint32_t a2, uint32_t a3) {
+    cpu.r[4] = a0; cpu.r[5] = a1; cpu.r[6] = a2; cpu.r[7] = a3; cpu.r[31] = fn_ra;
+    fn();
+    return cpu.r[2];
+}
+void f_80073b08(void); void f_800461f4(void); void f_8001f88c(void); void f_8001f9fc(void); void f_8004a34c(void);
+void f_8004a218(void); void f_8002b240(void); void f_80019c88(void);
+/* camera pair a/b: a cut when the eye jumps or turns a lot between two packets */
+static int cut_is_cut(const uint8_t *a, const uint8_t *b) {
+    int32_t qa[4], qb[4];
+    q_unpack(cutp_r32(a, 0x10), cutp_r32(a, 0x14), qa); q_unpack(cutp_r32(b, 0x10), cutp_r32(b, 0x14), qb);
+    double d = 0, la = 0, lb = 0;
+    for (int i = 0; i < 4; i++) { d += (double)qa[i] * qb[i]; la += (double)qa[i] * qa[i]; lb += (double)qb[i] * qb[i]; }
+    const double c = (la > 0 && lb > 0) ? fabs(d) / sqrt(la * lb) : 1.0;   /* cos(half angle) */
+    int64_t dp = 0;
+    for (int i = 0; i < 3; i++) { int64_t e = (int64_t)(int32_t)cutp_r32(b, 4 + i * 4) - (int32_t)cutp_r32(a, 4 + i * 4); dp += e * e; }
+    if (cutsm_lg) rt_logf("cutsm cam frame %u->%u move %.0f turn %.2f deg\n", cutp_r32(a, 0) & 0xFFFF,
+                          cutp_r32(b, 0) & 0xFFFF, sqrt((double)dp), 2 * acos(c > 1 ? 1 : c) * 57.29578);
+    return dp > (int64_t)1500 * 1500 || c < 0.9659;   /* > 1500 units or > 30 degrees in one packet */
+}
+/* write camera / object / character transforms blended between packets A and B (t = 0: A, 1: B) */
+static void cut_apply(const uint8_t *A, const uint8_t *B, double t) {
+    const int ia = cut_ang_i, ib = cut_ang_b;
+    const uint32_t sp0 = cpu.r[29], ra0 = cpu.r[31];
+    uint32_t r2 = cpu.r[2], r3 = cpu.r[3], r4 = cpu.r[4], r5 = cpu.r[5], r6 = cpu.r[6], r7 = cpu.r[7];
+    const uint32_t buf = (sp0 - 0x80u) & ~7u;
+    cpu.r[29] = buf - 0x10u;
+    /* camera: a blended header through the game's own camera setup */
+    {
+        int32_t qa[4], qb[4], q[4];
+        q_unpack(cutp_r32(A, 0x10), cutp_r32(A, 0x14), qa); q_unpack(cutp_r32(B, 0x10), cutp_r32(B, 0x14), qb);
+        q_blend(qa, qb, t, q);
+        for (int i = 0; i < 3; i++)
+            mem_w32(buf + 4 + i * 4, (uint32_t)lerp32((int32_t)cutp_r32(A, 4 + i * 4), (int32_t)cutp_r32(B, 4 + i * 4), t));
+        const uint32_t w10 = cutp_r32(B, 0x10), w14 = cutp_r32(B, 0x14);
+        mem_w32(buf + 0x10, (w10 & 0xFC000000u) | ((uint32_t)(q[1] & 0x1FFF) << 13) | (uint32_t)(q[0] & 0x1FFF));
+        mem_w32(buf + 0x14, (w14 & 0xFC000000u) | ((uint32_t)(q[3] & 0x1FFF) << 13) | (uint32_t)(q[2] & 0x1FFF));
+        gcall(0x80074108u, f_80073b08, buf, 0, 0, 0);
+    }
+    const uint32_t noA = cutp_r32(A, 0x10) >> 26, noB = cutp_r32(B, 0x10) >> 26;
+    const uint32_t ncA = cutp_r32(A, 0x14) >> 26, ncB = cutp_r32(B, 0x14) >> 26;
+    /* objects */
+    for (uint32_t i = 0; i < noB; i++) {
+        const uint8_t *rb = B + 0x18 + i * 0x18, *ra = NULL;
+        const int16_t id = (int16_t)(cutp_r32(rb, 0x14) & 0xFFFF);
+        for (uint32_t j = 0; j < noA; j++)
+            if ((int16_t)(cutp_r32(A + 0x18 + j * 0x18, 0x14) & 0xFFFF) == id) { ra = A + 0x18 + j * 0x18; break; }
+        int32_t qb[4], q[4], pos[3];
+        q_unpack(cutp_r32(rb, 0), cutp_r32(rb, 4), qb);
+        for (int k = 0; k < 3; k++) pos[k] = (int32_t)cutp_r32(rb, 8 + k * 4);
+        if (ra) {
+            int32_t qa[4], pa[3]; int64_t dp = 0;
+            q_unpack(cutp_r32(ra, 0), cutp_r32(ra, 4), qa);
+            for (int k = 0; k < 3; k++) { pa[k] = (int32_t)cutp_r32(ra, 8 + k * 4); dp += (int64_t)(pos[k] - pa[k]) * (pos[k] - pa[k]); }
+            if (dp > (int64_t)2000 * 2000) ra = NULL;   /* teleported: snap */
+            else { q_blend(qa, qb, t, q); for (int k = 0; k < 3; k++) pos[k] = lerp32(pa[k], pos[k], t); }
+        }
+        if (!ra) memcpy(q, qb, sizeof q);
+        const uint32_t obj = gcall(0x80073c68u, f_800461f4, (uint32_t)(int32_t)id, 0, 0, 0);
+        if (cutsm_lg > 3) rt_logf("cutsm obj id %x obj %08x pos %d %d %d q %d %d %d %d blend %d t %.2f\n", id, obj, pos[0], pos[1],
+                                  pos[2], q[0], q[1], q[2], q[3], ra != NULL, t);
+        if (!obj) continue;
+        for (int k = 0; k < 4; k++) mem_w32(buf + 0x20 + k * 4, (uint32_t)q[k]);
+        uint32_t qm = buf + 0x20;
+        if (id == 0x87) {   /* as 80073c34: times the constant quaternion (0, 0x1000, 0, 0) */
+            mem_w32(buf + 0x30, 0); mem_w32(buf + 0x34, 0x1000); mem_w32(buf + 0x38, 0); mem_w32(buf + 0x3c, 0);
+            gcall(0x80073dbcu, f_8001f88c, buf + 0x20, buf + 0x30, buf + 0x40, 0);
+            qm = buf + 0x40;
+        }
+        gcall(0x80073dc8u, f_8001f9fc, qm, obj + 4, 0, 0);
+        { static int dbg = -1; if (dbg < 0) { const char *e = getenv("RUGRATS_CUTSMDBG"); dbg = e ? atoi(e) : 0; } if (dbg) pos[1] -= dbg; }
+        for (int k = 0; k < 3; k++) mem_w32(obj + 0x18 + k * 4, (uint32_t)pos[k]);
+        if ((uint16_t)(id - 0x1fe) < 2) {   /* as 80073c34: a companion object at the same place */
+            mem_w16(obj + 0x24, 0x400);
+            mem_w32(obj + 0x1c, mem_r32(obj + 0x1c) + 0x2000);
+            const uint32_t o2 = gcall(0x80073e28u, f_800461f4, id == 0x1ff ? 0x259u : 0x25au, 0, 0, 0);
+            if (o2) {
+                gcall(0x80073e80u, f_8001f9fc, buf + 0x20, o2 + 4, 0, 0);
+                const int c = id == 0x1ff ? 0 : 1;
+                if (ia >= 0 && cuth_angv[ia][c] && cuth_angv[ib][c])
+                    mem_w16(o2 + 0x24, (uint16_t)lerp32(cuth_ang[ia][c], cuth_ang[ib][c], t));
+                for (int k = 0; k < 3; k++) mem_w32(o2 + 0x18 + k * 4, (uint32_t)pos[k]);
+                gcall(0x80073ee4u, f_8004a34c, o2, 0, 0, 0);
+            }
+        }
+        gcall(0x80073eecu, f_8004a34c, obj, 0, 0, 0);
+    }
+    /* characters: position + bones */
+    uint32_t ob = 0x18 + noB * 0x18;
+    for (uint32_t i = 0; i < ncB; i++) {
+        const uint8_t *rb = B + ob, *ra = NULL;
+        const uint32_t nbB = rb[0xe];
+        ob += 0x10 + nbB * 8;
+        const int16_t id = (int16_t)(cutp_r32(rb, 0xc) & 0xFFFF);
+        uint32_t oa = 0x18 + noA * 0x18;
+        for (uint32_t j = 0; j < ncA; j++) {
+            const uint8_t *r = A + oa;
+            if ((int16_t)(cutp_r32(r, 0xc) & 0xFFFF) == id) { ra = r; break; }
+            oa += 0x10 + r[0xe] * 8u;
+        }
+        int32_t pos[3];
+        for (int k = 0; k < 3; k++) pos[k] = (int32_t)cutp_r32(rb, k * 4);
+        if (ra) {
+            int64_t dp = 0; int32_t pa[3];
+            for (int k = 0; k < 3; k++) { pa[k] = (int32_t)cutp_r32(ra, k * 4); dp += (int64_t)(pos[k] - pa[k]) * (pos[k] - pa[k]); }
+            if (dp > (int64_t)2000 * 2000) ra = NULL;
+            else for (int k = 0; k < 3; k++) pos[k] = lerp32(pa[k], pos[k], t);
+        }
+        const uint32_t obj = gcall(0x80073f94u, f_800461f4, (uint32_t)(int32_t)id, 0, 0, 0);
+        if (!obj || mem_r8(obj + 0xa6) != 1) continue;
+        const uint32_t skel = mem_r32(obj + 0x154);
+        if (!skel) continue;
+        mem_w16(obj + 0x24, 0); mem_w16(obj + 0x26, 0); mem_w16(obj + 0x28, 0);
+        for (int k = 0; k < 3; k++) mem_w32(obj + 0x18 + k * 4, (uint32_t)pos[k]);
+        gcall(0x80074030u, f_8004a218, obj, 0, 0, 0);
+        const uint32_t nbA = ra ? ra[0xe] : 0;
+        for (uint32_t b = 0; b < nbB; b++) {
+            const uint8_t *bb = rb + 0x10 + b * 8, *ba = NULL;
+            const uint32_t bi = cutp_r32(bb, 0) >> 26;
+            for (uint32_t c = 0; c < nbA; c++) if ((cutp_r32(ra + 0x10 + c * 8, 0) >> 26) == bi) { ba = ra + 0x10 + c * 8; break; }
+            const uint32_t slot = mem_r8(skel + 0x14 + bi);
+            if (slot == 0xff) continue;
+            int32_t qb[4], q[4];
+            q_unpack(cutp_r32(bb, 0), cutp_r32(bb, 4), qb);
+            if (ba) { int32_t qa[4]; q_unpack(cutp_r32(ba, 0), cutp_r32(ba, 4), qa); q_blend(qa, qb, t, q); }
+            else memcpy(q, qb, sizeof q);
+            const uint32_t at = skel + slot * 40u + 0x38u;
+            if (cutsm_lg > 3) rt_logf("cutsm bone id %x obj %08x skel %08x bone %u slot %u at %08x q %d %d %d %d blend %d t %.2f\n",
+                                      id, obj, skel, bi, slot, at, q[0], q[1], q[2], q[3], ba != NULL, t);
+            for (int k = 0; k < 4; k++) mem_w32(at + k * 4, (uint32_t)q[k]);
+        }
+        gcall(0x800740fcu, f_8002b240, obj + 0x18, obj + 0x140, obj + 0x13c, obj + 0x8c);
+        mem_w32(obj + 0x148, mem_r32(obj + 0x13c));
+    }
+    cpu.r[29] = sp0; cpu.r[31] = ra0;
+    cpu.r[2] = r2; cpu.r[3] = r3; cpu.r[4] = r4; cpu.r[5] = r5; cpu.r[6] = r6; cpu.r[7] = r7;
+}
+/* The packets are authored at an even rate but arrive unevenly (1.6 - 2.8 vblanks apart in OPEN.BIN: sectors of
+   other streams interleave). Fit an even frame clock to the last CUTA arrivals (period P from the window's first and
+   last, base = the earliest arrival line) and show the frame position that trails it by the window's lateness spread
+   + 1.1 frames, so the packet pair needed is nearly always in already. Blend the two copies around that position. */
+static void cut_show(void) {
+    if (cutp_n <= 0) return;
+    const uint64_t now = cut_now64();
+    double P = (double)CPU_HZ * 4 / 75;
+    if (ca_n >= 2 && ca_f[ca_n - 1] > ca_f[0]) P = (double)(ca_t[ca_n - 1] - ca_t[0]) / (ca_f[ca_n - 1] - ca_f[0]);
+    double base = 1e300, hi = -1e300;
+    for (int i = 0; i < ca_n; i++) {
+        const double o = (double)ca_t[i] - ca_f[i] * P;
+        if (o < base) base = o;
+        if (o > hi) hi = o;
+    }
+    const double lag = (hi - base) / P + 1.1;   /* one frame behind the latest line, plus the spread and 10% */
+    const double sp = ((double)now - base) / P - lag;   /* display position in frames */
+    int a = 0;
+    while (a + 1 < cutp_n && cuth_f[a + 1] <= sp) a++;
+    int b = a + 1 < cutp_n ? a + 1 : a;
+    double t = 0;
+    if (b != a) {
+        if (sp <= cuth_f[a]) t = 0;
+        else t = (sp - cuth_f[a]) / (cuth_f[b] - cuth_f[a]);
+        if (t > 1) t = 1;
+        if (cuth_cut[b]) t = 0;
+    }
+    if (cutsm_lg > 1) rt_logf("cutsm show f%u pos %.2f newest %d pair %d-%d t %.2f lag %.2f\n", present_count, sp,
+                              cuth_f[cutp_n - 1], cuth_f[a], cuth_f[b], t, lag);
+    cut_ang_i = a; cut_ang_b = b;
+    cut_apply(cuth[a], cuth[b], t);
+}
+/* CD callback (stream sector ready): note when a packet became ready (gp+104 0 -> 1), for the blend timing */
+int rt_hook_80019c88(void) {
+    static int inside;
+    if (inside) return 0;
+    const uint32_t gp = cpu.r[28];
+    const uint8_t was = mem_r8(gp + 104);
+    inside = 1; f_80019c88(); inside = 0;
+    if (!was && mem_r8(gp + 104)) cut_ready_cyc = cpu.cycles;
+    return 1;
+}
 void f_8007412c(void);
 int rt_hook_8007412c(void) {
     static int on = -1, pad = -1, inside;
     if (on < 0) on = getenv("RUGRATS_CUTLOG") != NULL;
+    if (cutsm_lg < 0) { const char *e = getenv("RUGRATS_CUTSMLOG"); cutsm_lg = e ? atoi(e) : 0; }
     if (pad < 0) { const char *e = getenv("RUGRATS_CUTPAD"); pad = e ? atoi(e) != 0 : 1; }
     cut_last_vbl = hooks_frame(); cut_seen = 1;   /* cutscene_prop(): a streamed cutscene is running */
-    if (inside || (!on && !pad)) return 0;
+    if (inside) return 0;
     uint32_t gp = cpu.r[28];
     uint32_t cnt0 = mem_r16(gp + 3508);
+    const int sm = cutsm_active();
+    if (cnt0 == 0 || hooks_frame() - cutsm_last_vbl > 30) cutp_n = 0;   /* a new cutscene */
+    cutsm_last_vbl = hooks_frame();
+    if (sm && cutp_n > 0) {
+        /* drop padding packets; no real packet ready: an extra pass with blended transforms, no wait */
+        for (;;) {
+            if (!mem_r8(gp + 104)) break;
+            uint32_t p = mem_r32(gp + 96);
+            if (!p || mem_r32(p) != 0 || mem_r32(p + 4) != 0) break;
+            mem_w8(gp + 104, 0);
+        }
+        if (!mem_r8(gp + 104)) {
+            /* undo this pass's fade-out step (loop top: s2 += 25 when fewer than 13 frames are left) */
+            const int32_t cnt = (int16_t)mem_r16(gp + 0xdb4);
+            if ((int32_t)cpu.r[20] - cnt < 13 && !(mem_r8(cpu.r[19] + 7) & 1)) {
+                cpu.r[18] -= 0x19;
+                mem_w16(0x800C3F2Cu, (int32_t)cpu.r[18] < 256 ? cpu.r[18] : 0xff);
+            }
+            cut_show();
+            cpu.r[2] = 0;
+            return 1;
+        }
+    } else if (!on && !pad && !sm) return 0;
     if (pad) {
         uint64_t budget = (uint64_t)CPU_HZ * 2, spent = 0;   /* at most 2 s of game time, then let the original run */
         unsigned dropped = 0;
@@ -3722,7 +3994,67 @@ int rt_hook_8007412c(void) {
         }
         if (on && dropped) rt_logf("cut: dropped %u padding packet(s) at frame %u vbl %u\n", dropped, cnt0, hooks_frame());
     }
+    static uint8_t tmp[CUTP_MAX];
+    uint32_t pk = mem_r8(gp + 104) ? mem_r32(gp + 96) : 0, pl = 0;
+    if (sm && pk && mem_r32(pk) != 0xDDDDDDDDu && (pl = cutp_len(pk)) != 0)
+        for (uint32_t i = 0; i < pl; i += 4) { const uint32_t w = mem_r32(pk + i); memcpy(tmp + i, &w, 4); }
+    const uint32_t ra_in = cpu.r[31];
+    if (sm && pl && cutp_n > 0)   /* true companion angles back before the packet's += 50 */
+        for (int c = 0; c < 2; c++) if (cuth_angv[cutp_n - 1][c]) {
+            const uint32_t o2 = gcall(0x80073e28u, f_800461f4, c ? 0x25au : 0x259u, 0, 0, 0);
+            if (o2) mem_w16(o2 + 0x24, (uint16_t)cuth_ang[cutp_n - 1][c]);
+        }
+    cpu.r[31] = ra_in;
     inside = 1; f_8007412c(); inside = 0;
+    if (sm && pl && cpu.r[2] == 0) {
+        const uint32_t v = cpu.r[2];
+        const uint64_t now = cut_now64();
+        const uint64_t arr = (uint32_t)(cpu.cycles - cut_ready_cyc) < CPU_HZ / 4 ? now - (uint32_t)(cpu.cycles - cut_ready_cyc) : now;
+        const int32_t f = (int32_t)(cutp_r32(tmp, 0) & 0xFFFF);
+        if (cutp_n > 0 && f <= cuth_f[cutp_n - 1]) { cutp_n = 0; ca_n = 0; }   /* numbering restarted */
+        if (cutp_n == CUTH) {
+            memmove(cuth[0], cuth[1], sizeof cuth[0] * (CUTH - 1));
+            memmove(cuth_f, cuth_f + 1, sizeof cuth_f[0] * (CUTH - 1)); memmove(cuth_cut, cuth_cut + 1, CUTH - 1);
+            memmove(cuth_ang, cuth_ang + 1, sizeof cuth_ang[0] * (CUTH - 1)); memmove(cuth_angv, cuth_angv + 1, sizeof cuth_angv[0] * (CUTH - 1));
+            cutp_n--;
+        }
+        memcpy(cuth[cutp_n], tmp, CUTP_MAX);
+        cuth_f[cutp_n] = f;
+        {   /* companion angles after this packet (only when the packet has their parent object) */
+            const uint32_t no = cutp_r32(tmp, 0x10) >> 26;
+            for (int c = 0; c < 2; c++) {
+                cuth_angv[cutp_n][c] = 0;
+                for (uint32_t i = 0; i < no; i++)
+                    if ((cutp_r32(tmp + 0x18 + i * 0x18, 0x14) & 0xFFFF) == (c ? 0x1feu : 0x1ffu)) {
+                        const uint32_t o2 = gcall(0x80073e28u, f_800461f4, c ? 0x25au : 0x259u, 0, 0, 0);
+                        if (o2) { cuth_ang[cutp_n][c] = (int16_t)mem_r16(o2 + 0x24); cuth_angv[cutp_n][c] = 1; }
+                        break;
+                    }
+            }
+        }
+        cuth_cut[cutp_n] = cutp_n == 0 || f - cuth_f[cutp_n - 1] > 4 || cut_is_cut(cuth[cutp_n - 1], cuth[cutp_n]);
+        cutp_n++;
+        if (cutp_n == 1) ca_n = 0;
+        if (ca_n == CUTA) { memmove(ca_f, ca_f + 1, sizeof ca_f[0] * (CUTA - 1)); memmove(ca_t, ca_t + 1, sizeof ca_t[0] * (CUTA - 1)); ca_n--; }
+        ca_f[ca_n] = f; ca_t[ca_n] = arr; ca_n++;
+        if (cutsm_lg > 2) {   /* records: object ids + top bits, character ids + bone counts */
+            char b[512]; int n = 0;
+            const uint32_t no = cutp_r32(tmp, 0x10) >> 26, nc = cutp_r32(tmp, 0x14) >> 26;
+            for (uint32_t i = 0; i < no && n < 400; i++) {
+                const uint8_t *r = tmp + 0x18 + i * 0x18;
+                n += snprintf(b + n, sizeof b - n, " o%x:%x/%x", cutp_r32(r, 0x14) & 0xFFFF, cutp_r32(r, 0) >> 26, cutp_r32(r, 4) >> 26);
+            }
+            uint32_t o = 0x18 + no * 0x18;
+            for (uint32_t i = 0; i < nc && n < 400; i++) {
+                n += snprintf(b + n, sizeof b - n, " c%x:%u/%x", cutp_r32(tmp + o, 0xc) & 0xFFFF, tmp[o + 0xe], cutp_r32(tmp + o, 0xc) >> 24);
+                o += 0x10 + tmp[o + 0xe] * 8u;
+            }
+            rt_logf("cutsm recs %d:%s\n", f, b);
+        }
+        if (cutsm_lg && ca_n >= 2) rt_logf("cutsm pkt %d ivl %.2f vbl\n", f, (double)(ca_t[ca_n - 1] - ca_t[ca_n - 2]) * 60.0 / CPU_HZ);
+        cut_show();
+        cpu.r[2] = v;
+    }
     if (!on) return 1;
     uint32_t p = mem_r32(gp + 3520) - 24, v0 = cpu.r[2];
     rt_logf("cut pkt %08x w0 %08x w1 %08x frame %u cnt %u -> %u ret %u vbl %u\n", p, mem_r32(p), mem_r32(p + 4),

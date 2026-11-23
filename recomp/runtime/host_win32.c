@@ -1323,6 +1323,8 @@ static MenuItem menu_items[] = {
     { "Extended View Distance", MI_CHOICE, &opt.view_ext, v_chatter, 4, viewext_names, NULL, NULL, "video", "view_ext", NULL,
       "Hedge maze and Reptar 2010: how far rooms seen over walls are drawn. Lower = fewer polygons, faster; "
       "far parts can then be missing. Off: original.", T_ENH },
+    { "Smooth Cutscenes", MI_CHOICE, &opt.cut_smooth, v_bool, 2, off_on, NULL, NULL, "video", "cut_smooth", NULL,
+      "On: in-engine cutscenes run at your frame rate (motion blended between the disc's 18.75 steps per second; the picture is ~1/20 s behind the sound). Off: original 18.75 fps.", T_ENH },
     { "Override Camera", MI_CHOICE, &opt.rcam_override, v_bool, 2, off_on, NULL, NULL, "input", "rcam_override", NULL,
       "On: the right-stick camera also works in levels where it is normally off (Touchdown Tommy).", T_ENH },
     { "Wall Bonk", MI_CHOICE, &opt.wall_bonk, v_bool, 2, off_on, NULL, NULL, "game", "wall_bonk", NULL,
@@ -2717,6 +2719,7 @@ static void load_config(void) {
     if (opt.bar_roar < 0 || opt.bar_roar > 2) opt.bar_roar = 1;
     opt.wall_bonk = GetPrivateProfileIntA("game", "wall_bonk", 1, ini) != 0;
     opt.shot_walk = GetPrivateProfileIntA("game", "shot_walk", 1, ini) != 0;
+    opt.cut_smooth = GetPrivateProfileIntA("video", "cut_smooth", 1, ini) != 0;
     /* "Let There Be Light" Fixes; an ini from before the merge (2026-11-19) may only have the old Ceiling Fan key */
     opt.light_fixes = GetPrivateProfileIntA("game", "light_fixes", GetPrivateProfileIntA("game", "fan_still", 1, ini), ini) != 0;
     opt.fan_still = opt.night_furn = 1;
@@ -2829,6 +2832,7 @@ int main(int argc, char **argv) {
         if ((e = getenv("RUGRATS_RCAMOVR"))) opt.rcam_override = atoi(e) != 0;
         if ((e = getenv("RUGRATS_WALLBONK"))) opt.wall_bonk = atoi(e) != 0;
         if ((e = getenv("RUGRATS_SHOTWALK"))) opt.shot_walk = atoi(e) != 0;
+        if ((e = getenv("RUGRATS_CUTSMOOTHOPT"))) opt.cut_smooth = atoi(e) != 0;
         if ((e = getenv("RUGRATS_LIGHTFIXES"))) opt.light_fixes = atoi(e) != 0;
         if ((e = getenv("RUGRATS_FANSTILL"))) opt.fan_still = atoi(e) != 0;     /* debug: one part alone */
         if ((e = getenv("RUGRATS_NIGHTFURN"))) opt.night_furn = atoi(e) != 0;

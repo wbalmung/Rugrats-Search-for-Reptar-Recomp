@@ -166,6 +166,7 @@ typedef struct {
     int note_fade;       /* 1 = released notes fade over >= ~3 ms (game's instant release rate 0 clicks), 0 = original */
     int rcam_override;   /* 1 = right-stick camera also in levels where it is off by default (hooks.c rcam_excluded) */
     int wall_bonk;       /* 1 = original: walking into a wall bonks (anim, sound, short lock); 0 = just stop */
+    int cut_smooth;      /* 1 = in-engine cutscenes blended between their 18.75/s CD packets (hooks.c), 0 = original */
     int shot_walk;       /* 1 = Fixed: the walk goes back to 1x after shooting while walking; 0 = original (stays 2x) */
     int light_fixes;     /* "Let There Be Light" Fixes (F1 Enhancements, ini [game] light_fixes). 1 = Fixed: in db 12
                             (power out) the kitchen ceiling fan stands still and the daytime-coloured furniture textures

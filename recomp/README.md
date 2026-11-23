@@ -116,6 +116,32 @@ stream with empty padding sectors after the header. Two port bugs, both checked 
   ended the 1412-frame opening cinematic after one frame (it now plays before the title, as on a PS1). Packets whose
   first 8 bytes are zero are dropped. `RUGRATS_CUTPAD=0` = old. Debug: `RUGRATS_CUTLOG=1`.
 
+### Smooth Cutscenes (2026-11-21, Enhancements row, ini `[video] cut_smooth`, default On)
+
+The stream gives one packet per 4 data sectors (18.75/s in `CINEPAK*.BIN`, ~30/s in `OPEN.BIN`) and the player
+renders once per packet. A packet holds only absolute transforms: camera position + quaternion (header), objects
+(quaternion -> matrix obj+4, position obj+0x18, id), characters (position + one quaternion per bone into the
+skeleton obj+0x154). With the option on (and the real-time step on):
+- the cutscene chain (`8001d3e8` called from `0x800745dc`) gets the gameplay pacing (one loop pass per presented
+  frame, early flip);
+- `8007412c` (hook) returns at once when no packet is ready, after writing camera / object / bone transforms blended
+  between the two packet copies around the display position (positions lerp, quaternions nlerp keeping the 13-bit
+  range); a ready packet runs the original code (faces, mouths, sounds on time) and is then blended the same way;
+- display position: an even frame clock fitted to the last 32 packet arrivals (arrival = the CD callback `80019c88`
+  setting the ready flag), trailing the newest packet by the arrival spread + 1.1 frames (~60-90 ms behind the sound);
+- no blend over a camera cut (eye moves > 1500 units or turns > 30 degrees in one packet), a frame gap > 4, or an
+  object / character that jumps > 2000 units;
+- the fridge door halves (0x259 / 0x25a, companions of objects 0x1fe / 0x1ff, drawn from the angle obj+0x24, which
+  `80073c34` raises by 50 per packet) are blended from the value after each packet; the true value is put back
+  before each packet so the `+= 50` doesn't drift;
+- the loop's fade-out step (`s2 += 25` per pass in the last 13 frames) is undone on the extra passes.
+Game state after a cutscene is the same as with the option off (checked: fridge cutscene, frames after it identical
+apart from random sparkle particles). `RUGRATS_CUTSMOOTH=0` / `RUGRATS_CUTSMOOTHOPT=0` = off;
+`RUGRATS_CUTSMLOG=1` (packets, camera deltas) / `2` (+ display position per frame) / `3` (+ record ids) / `4` (+ every
+object / bone write); `RUGRATS_CUTSMDBG=<n>` raises blended objects by n (proves the writes reach the screen).
+Not handled: the opening cinematic's frame-range callback `8008ea70` (places one object by the integer frame number:
+that object still steps at the packet rate and leads the blended picture by ~1 frame).
+
 ## Audio and auto frame rate
 
 - Output keeps ~4 buffers (~67 ms) queued; each chunk is resampled by up to ±0.5% to hold that level
