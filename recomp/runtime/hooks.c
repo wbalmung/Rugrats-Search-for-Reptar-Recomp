@@ -4214,7 +4214,9 @@ int rt_hook_8008864c(void) {
    Part of F1 Enhancements '"Let There Be Light" Fixes' (opt.light_fixes, ini [game] light_fixes, RUGRATS_LIGHTFIXES;
    this part alone: debug RUGRATS_FANSTILL=0). Switched back to Original
    while the level runs, the fan gets its speed back (the game's value seen before zeroing; 32 around y if this run
-   never saw it, e.g. after loading a state saved with the fan stopped). */
+   never saw it, e.g. after loading a state saved with the fan stopped). Camera room 44 (power back on in the ending
+   cutscene, 2026-11-23) counts as Original too; note the fan is not drawn or ticked there at all (checked to the end of
+   the level), so this has no visible effect today. */
 #define FAN_DB    12
 #define FAN_MODEL 94u
 static int spin_lg = -1;   /* debug: RUGRATS_FANLOG=1 logs each spinner call (db, obj, model, speeds, angles) */
@@ -4222,7 +4224,7 @@ static void fan_rule(uint32_t obj) {
     static int16_t spd[3] = {32, 0, 0};   /* the fan's own speeds (last seen non-zero) */
     if ((int32_t)mem_r32(0x800C5678u) == FAN_DB && (obj >> 24) == 0x80u && mem_r16(obj + 0x96) == FAN_MODEL) {
         const int moving = mem_r16(obj + 0x2c) | mem_r16(obj + 0x2e) | mem_r16(obj + 0x30);
-        if (opt.light_fixes && opt.fan_still) {
+        if (opt.light_fixes && opt.fan_still && mem_r8(0x800E00C0u) != 44) {   /* 44 = power back on, see Night Furniture */
             if (moving)
                 for (int i = 0; i < 3; i++) spd[i] = (int16_t)mem_r16(obj + 0x2c + 2 * i);
             mem_w16(obj + 0x2c, 0); mem_w16(obj + 0x2e, 0); mem_w16(obj + 0x30, 0);

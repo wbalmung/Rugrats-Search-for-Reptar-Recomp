@@ -917,7 +917,8 @@ copy of the kitchen, camera room 44 (first byte of the room queue `0x800E00C0`; 
 never uses 44). While the camera room is 44 every darkened palette and model colour is put back to its vanilla value,
 so the lit room looks exactly like Original (checked pixel for pixel to the end of the level). The check also runs from
 the object draw hooks, because the timer pass that normally drives this part does not run in cutscenes. Debug:
-`RUGRATS_NIGHTPOWER=0` keeps the furniture dark there.
+`RUGRATS_NIGHTPOWER=0` keeps the furniture dark there. The ceiling fan part also stands down in room 44 (fan counts as
+powered), but the fan is never drawn or ticked after the cut, so nothing changes on screen.
 
 Final Level Behavior (Enhancements page, ini `[game] final_level`: 1 Enhanced = default, 0 Default = original;
 `RUGRATS_FINALLEVEL`). Enhanced = three parts, all on or all off: (1) stay in the level after the last piece, (2) a
