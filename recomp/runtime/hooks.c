@@ -4287,6 +4287,11 @@ void hooks_spin_far(uint32_t obj) {
      flag cleared, darkened again by the next night_frame.
    - Save states hold the flags + saved colours ("hooks.night_*"); a state without them (older build) has untouched
      VRAM -> flags cleared on load.
+   - Power back on (2026-11-23, user): the level's last cutscene (Triangle on Spike: fridge opens, then the power comes
+     back) cuts to a lit copy of the kitchen = camera room 44 (first byte of the room queue 0x800E00C0; the dark kitchen
+     is room 19, gameplay never uses 44, checked over 24 db 12 saves). From then on to the end of the level the room
+     stays 44, and night_want() is 0 there: the CLUTs and model colours go back to their vanilla values, as if the
+     option were Original. Debug: RUGRATS_NIGHTPOWER=0 = keep them dark.
    Debug: RUGRATS_NIGHTCLUT=<hex clut>[:<hex source clut>],... replaces the list, RUGRATS_NIGHTDBG=1 paints listed CLUTs red,
    RUGRATS_NIGHTLOG=1 logs uploads / applies. */
 uint16_t gpu_px_get(int x, int y);
@@ -4436,6 +4441,13 @@ static unsigned night_collect_all(uint32_t m, unsigned flags, uint32_t *addr) { 
     }
     return n;
 }
+/* option on and the power still out (camera room 44 = the lit kitchen of the ending cutscene, see above) */
+static int night_want(void) {
+    static int power = -1;
+    if (power < 0) { const char *e = getenv("RUGRATS_NIGHTPOWER"); power = !(e && *e == '0'); }
+    if (!(opt.light_fixes && opt.night_furn)) return 0;
+    return !(power && mem_r8(0x800E00C0u) == 44);
+}
 static void night_model(unsigned k) {
     if (!nm_n[k]) return;
     if (!nm_addr[k][0]) {                 /* from an old state without addresses: collect them again */
@@ -4445,7 +4457,7 @@ static void night_model(unsigned k) {
         memcpy(nm_addr[k], a, sizeof a);
         if (!nm_addr[k][0]) { nm_n[k] = 0; return; }
     }
-    const int want = opt.light_fixes && opt.night_furn;
+    const int want = night_want();
     int ours = 1;
     for (unsigned i = 0; i < nm_n[k]; i++) if (mem_r32(nm_addr[k][i]) != nm_wrote[k][i]) ours = 0;
     if (want && (!ours || !nm_dark[k])) {
@@ -4464,8 +4476,14 @@ static void night_model(unsigned k) {
     }
 }
 static void night_models(void) { for (unsigned k = 0; k < NM_N; k++) if (nm_ptr[k]) night_model(k); }
+static void night_frame(void);
 void hooks_night_obj(uint32_t obj) {
     if ((obj >> 24) != 0x80u || (int)mem_r32(0x800C5678u) != 12) return;
+    {   /* the timer pass (night_frame's usual caller) does not run in cutscenes: apply a power-on / off change here */
+        static int last = -1;
+        const int w = night_want();
+        if (w != last) { last = w; night_frame(); }
+    }
     const uint32_t id = mem_r16(obj + 0x96);
     for (unsigned k = 0; k < NM_N; k++) {
         if (id != night_model_tab[k].id) continue;
@@ -4489,7 +4507,7 @@ static void night_frame(void) {
     }
     if (db != 12) return;
     night_models();
-    const int want = opt.light_fixes && opt.night_furn;
+    const int want = night_want();
     for (int k = 0; k < night_n; k++) {
         if (want == night_dark[k]) continue;
         int cx, cy; night_clut_xy(k, &cx, &cy);

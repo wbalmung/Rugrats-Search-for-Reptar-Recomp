@@ -645,7 +645,8 @@ logs every list packet with its layer and each frame's room point count.
 - `RUGRATS_LIGHTFIXES=0/1` sets the "Let There Be Light" Fixes option (Enhancements); `RUGRATS_FANSTILL=0` /
   `RUGRATS_NIGHTFURN=0` turn off only its fan / furniture part. `RUGRATS_FANLOG=1` logs every spinning-prop update
   (level, object, model, speeds, angles); `RUGRATS_NIGHTCLUT`, `RUGRATS_NIGHTDBG`, `RUGRATS_NIGHTLOG` are the furniture
-  part's debug switches (see "Let There Be Light" Fixes).
+  part's debug switches, `RUGRATS_NIGHTPOWER=0` keeps it dark after the power comes back in the ending
+  cutscene (see "Let There Be Light" Fixes).
 - `RUGRATS_AISMOOTH=0` turns off companion smoothing (default on: characters the game updates in a 1/30 s timer, like
   Chuckie following Tommy, get their running animation, position and heading drawn in between those updates at high
   fps; only the picture changes, the game's own state stays exactly as it was). `RUGRATS_AISMOOTHLOG=1` logs each
@@ -909,8 +910,14 @@ living room floor lamp stand (138), the inside of the fireplace (953), the ball 
 128 colour words takes several rows (the golf clubs: two). Original puts
 the saved colours back. Save states keep the model rows by model id (`hooks.nm3_*`, fixed 32 x 128 layout); states
 from the two earlier test layouts are converted. Uploads over a listed CLUT re-arm it, other levels are never touched,
-save states keep the state (older states are handled). Not covered: the range hood over the stove (untextured, lit by
-vertex colours).
+save states keep the state (older states are handled). (The range hood "not covered" note of the first version is out of
+date: it is model 239 above.)
+Power back on: the level's last cutscene (Triangle on Spike: the fridge opens, then the power comes back) cuts to a lit
+copy of the kitchen, camera room 44 (first byte of the room queue `0x800E00C0`; the dark kitchen is room 19, gameplay
+never uses 44). While the camera room is 44 every darkened palette and model colour is put back to its vanilla value,
+so the lit room looks exactly like Original (checked pixel for pixel to the end of the level). The check also runs from
+the object draw hooks, because the timer pass that normally drives this part does not run in cutscenes. Debug:
+`RUGRATS_NIGHTPOWER=0` keeps the furniture dark there.
 
 Final Level Behavior (Enhancements page, ini `[game] final_level`: 1 Enhanced = default, 0 Default = original;
 `RUGRATS_FINALLEVEL`). Enhanced = three parts, all on or all off: (1) stay in the level after the last piece, (2) a
