@@ -2886,9 +2886,14 @@ static void exec_poly(uint32_t *f) {
     }
     if (tex && !gour && raw) { for (int k = 0; k < nv; k++) v[k].r = v[k].g = v[k].b = 128; }
     /* depth check (hi-res only): every vertex projected by room geometry -> writes depth (opaque only); every vertex
-       by a world object -> tested against it; anything else (HUD, 2D, mixed, unknown) draws as before */
+       by a world object -> tested against it; anything else (HUD, 2D, mixed, unknown) draws as before.
+       Only in frames that show the 3D world (gpu_world_frame, room geometry): the title screen draws no fill, so its
+       depth was never cleared and the logo / earlier scenes hid the babies peeking in at the bottom corners
+       (2026-11-22). RUGRATS_DEPTHWORLD=0 = old (depth check in every frame). */
+    static int dworld = -1;
+    if (dworld < 0) { const char *e = getenv("RUGRATS_DEPTHWORLD"); dworld = e ? atoi(e) != 0 : 1; }
     int dm = DM_NONE, npdepth = 0;   /* npdepth: depths from the wall plane (corners clamped / without depth) */
-    if (opt.depthfix && (hr.buf || hw_s)) {
+    if (opt.depthfix && (hr.buf || hw_s) && (gpu_world_frame || !dworld)) {
         /* all corners room points (opaque) -> write; else all corners object points -> test */
         int k;
         if (!semi_on) {

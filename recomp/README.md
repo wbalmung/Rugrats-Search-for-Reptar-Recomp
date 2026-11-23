@@ -268,6 +268,9 @@ tries fewer, then Off (logged). Alpha-tested cut-outs (texel 0) keep hard inner 
   piece can be drawn after a near wall): CPU in draw order; D3D11 first draws each batch's room pieces and fills
   depth-only (room nearest wins, fills 0), then tests room pieces like objects in the normal pass (plain depth
   testing, any D3D11 GPU). `RUGRATS_ROOMTEST=0` turns that part off.
+  The check runs only in frames that show the 3D world (room geometry, `gpu_world_frame`): the title screen draws no
+  fill, so its depth was never cleared and the babies peeking in at the bottom corners stayed hidden.
+  `RUGRATS_DEPTHWORLD=0` = old (every frame).
   Room water surfaces (the sewer's brown water, drawer `80030ce0`) are tested like objects: the water grid runs on
   under the raised floor beside it and the game sorts it after that floor, so square bits of water showed through
   the ledge and popped in and out as the camera turned. `RUGRATS_WATERDEPTH=0` = old (water never tested).
