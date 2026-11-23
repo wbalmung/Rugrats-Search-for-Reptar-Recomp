@@ -28,7 +28,9 @@ ROOT = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=Tr
 ROOT_FILES = {".gitignore", ".gitattributes", "README.md", "PUBLISHING.md", "LICENSE", "Launcher.bat"}
 SOURCE_EXT = {".c", ".h", ".py", ".lua", ".md", ".txt"}
 MOD_INI = re.compile(r"recomp/mods/[A-Za-z0-9_.\-]{1,63}/mod\.ini")  # example mods (our own text, MODDING.md)
-MAX_BYTES = 256 * 1024          # largest source file today is ~100 KB
+MAX_BYTES = 256 * 1024          # most source files are well under 100 KB
+# Hand-written files allowed to be bigger (the content checks below still apply to them).
+SIZE_OK = {"recomp/runtime/hooks.c": 512 * 1024}   # all game hooks in one file, ~270 KB on 2026-11-22
 
 # Things that only appear in game data or in files the build generates.
 GEN_LABEL = re.compile(rb"^L_[0-9a-f]{8}:", re.M)            # labels in build/gen/*.c
@@ -70,7 +72,7 @@ def check_file(path, data, priv):
     ext = os.path.splitext(path)[1].lower()
     if not top and ext not in SOURCE_EXT and not MOD_INI.fullmatch(path):
         bad.append(f"file type {ext or '(none)'} is not plain source")
-    if len(data) > MAX_BYTES:
+    if len(data) > SIZE_OK.get(path, MAX_BYTES):
         bad.append(f"too big ({len(data)} bytes)")
     try:
         text_ok = b"\0" not in data and data.decode("utf-8") is not None
