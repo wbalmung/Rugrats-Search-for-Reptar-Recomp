@@ -778,7 +778,7 @@ pages (not Debug: its rows are live game values, not settings), sub-headings and
 are pinned at the bottom of every page. Switch pages with Q / E, Tab / Shift+Tab, PgUp / PgDn, LB / RB (L1 / R1 on
 Sony pads), a click on a tab, or the mouse wheel over the tab bar. The last page stays selected between openings.
 
-Debug page (2026-11-23): "Puzzle pieces" (0..12) and "Reptar bars" (0..99) the player has, read from game RAM each time
+Debug page (2026-11-23): "Puzzle pieces" (0..12), "Reptar bars" (0..99) and "Freecam" (below). Pieces / bars the player has, read from game RAM each time
 the menu opens and written on every change; not in the ini. Before any level has run (title screen) both show "In game
 only" and ignore changes. Progress RAM (hooks.c `hooks_dbg_*`): pieces earned bitmask `0x800C56BC` (s16, bit = piece
 0..11), placed `0x800C56BE`; bars taken per level `0x800C56C0 + 4*db` (bit = that level's bar), spent
@@ -786,6 +786,15 @@ only" and ignore changes. Progress RAM (hooks.c `hooks_dbg_*`): pieces earned bi
 Fewer bars = spend held ones (spare first); more = unspend spent ones, then mark bars taken in db 8 (leftover level)
 and db 19 (unused), so no real bar ever disappears from a level. Fewer pieces = unplaced pieces go first (highest
 first), then placed ones; more = the lowest unearned pieces, unplaced. The memory card save keeps whatever is set.
+Freecam (Debug page, Off / On, not saved): detaches the camera; the player stands still because the game gets no pad
+buttons while it is engaged (`host_pad_buttons`; only while the gameplay camera ran in the last 0.5 s, so menus,
+cutscenes and the title keep their input). Up / Down fly along the view, Left / Right strafe, right stick or J L I K
+look, R1 / L1 up / down, Cross held x4 speed, Square held x1/4 (pad and key bindings apply: `host_pad_raw`). How:
+hooks.c "Debug Freecam" takes the gameplay LookAt call (`800211e8` from `8001e928`, same filter as the right-stick
+camera), writes our eye to cam+0x14 and builds the matrix from the exact direction; `8002953c` puts the game's eye back
+each frame, so turning it off returns to the normal camera at once. Starts from the current view, and again after a
+level change or cutscene. Rooms render around wherever the eye is; inside walls you see the void.
+`RUGRATS_FREECAM=1` (on from the start, tests), `RUGRATS_FCLOG=1` (eye per game frame).
 Test helper: `RUGRATS_MENU_KEYS=<keys>` with `RUGRATS_MENU=<frame>` (+ `RUGRATS_MENU_TAB=<page>`): one key per menu
 step, U D L R = arrows, 0 = shot (`shots/menuN.bmp`), then the menu closes. Logs `debug: pieces ...` / `debug: bars ...`.
 

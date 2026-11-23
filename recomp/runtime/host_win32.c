@@ -325,8 +325,21 @@ static uint32_t pad_phys(int port) {
 }
 
 int hooks_golf_holding(void);
+int hooks_freecam_engaged(void);
+/* the pad as held (active low), without the game-side blocks below: the freecam reads it */
+uint16_t host_pad_raw(int port) {
+    uint16_t b = 0;
+    if (port == 0) b |= (uint16_t)test_input();
+    if (port == 0 && GetForegroundWindow() == wnd)
+        for (int a = 0; a < BA_N; a++) if (keys[bind_key[a] & 255]) b |= (uint16_t)(1 << bind_def[a].bit);
+    uint32_t p = pad_phys(port);
+    for (int a = 0; a < BA_N; a++) if (p & (1u << bind_pad[a])) b |= (uint16_t)(1 << bind_def[a].bit);
+    if (pad_block && port == 0) b = 0;
+    return (uint16_t)~b;
+}
 uint16_t host_pad_buttons(int port) {
     if (hooks_golf_holding()) return 0xFFFF;     /* Golf Reactions: hole end waits for the line, no input */
+    if (port == 0 && hooks_freecam_engaged()) return 0xFFFF;   /* Debug Freecam: the pad flies the camera */
     uint16_t b = 0;
     if (port == 0) b |= (uint16_t)test_input();
     if (port == 0 && GetForegroundWindow() == wnd)
@@ -1263,6 +1276,7 @@ extern int hooks_level;
 int hooks_dbg_pieces(void), hooks_dbg_bars(void);
 void hooks_dbg_set_pieces(int n), hooks_dbg_set_bars(int n);
 static int dbg_pieces, dbg_bars;
+extern int hooks_freecam;   /* Debug Freecam (hooks.c), not saved */
 static int v_pieces[13], v_bars[100];
 static int dbg_ingame(void) { return hooks_level >= 1; }
 static void dbg_sync(void) {
@@ -1392,6 +1406,9 @@ static MenuItem menu_items[] = {
     { "Reptar bars", MI_CHOICE, &dbg_bars, v_bars, 100, NULL, NULL, show_bars, NULL, NULL, ap_bars,
       "Bars you are holding. No bar disappears from a level. At 15 or more the next bar you pick up earns a puzzle "
       "piece (under 12 pieces).", T_DEBUG },
+    { "Freecam", MI_CHOICE, &hooks_freecam, v_bool, 2, off_on, NULL, NULL, NULL, NULL, NULL,
+      "Detach the camera and fly through the level (the player stands still). Move: d-pad / left stick, look: right "
+      "stick or J L I K, up / down: R1 / L1, hold Cross: fast, Square: slow. Gameplay only.", T_DEBUG },
     { "Quick save", MI_ACTION, NULL, NULL, 0, NULL, NULL, NULL, NULL, NULL, ac_qsave,
       "Save the game right here (during gameplay). Keyboard: F5.", T_ACTIONS },
     { "Quick load", MI_ACTION, NULL, NULL, 0, NULL, NULL, NULL, NULL, NULL, ac_qload,

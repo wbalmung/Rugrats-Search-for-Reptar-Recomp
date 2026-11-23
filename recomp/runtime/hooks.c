@@ -1272,6 +1272,8 @@ static int rcam_on(void) {
    never runs in mode 4 (Override Camera included) and forgets its turn, so the game's view also returns afterwards. */
 static int rcam_fixed(uint32_t cam) { return (int16_t)mem_r16(cam + 0x4a) == 4; }
 
+static void fc_update(uint32_t cam);
+static int fc_on;                       /* Debug Freecam: eye / angles valid (see "Debug Freecam" below) */
 int rt_hook_8002953c(void) {
     uint32_t cam = cpu.r[4];
     if (rcam_cam && rcam_cam == cam) {
@@ -1282,6 +1284,8 @@ int rt_hook_8002953c(void) {
     rcam_cam = 0;
     rcam_sx = rcam_sy = 0;
     rcam_dt = 0;
+    fc_update(cam);
+    if (fc_on) { rcam_active = 0; rcam_pitch = 0; rcam_pull = 0; return 0; }   /* freecam in charge */
     if (!rcam_on()) { rcam_active = 0; rcam_pitch = 0; return 0; }
     if (rcam_fixed(cam)) { rcam_active = 0; rcam_pitch = 0; rcam_pull = 0; return 0; }
     uint32_t ticks = mem_r32(cpu.r[28] + 156);
@@ -1462,8 +1466,100 @@ static void rcam_place(const double t[3], const double want[3], int hint, double
 
 static int rcam_in_lookat;   /* running the original LookAt from inside its hook */
 void f_800211e8(void);
+
+/* ---- Debug Freecam (2026-11-23, user; F1 Debug page, not saved) --------------------------------------------------
+   While on, the gameplay camera's LookAt call (same filter as the right-stick camera) gets our eye and a target one
+   unit-vector ahead of it; the eye is also written to cam+0x14 (the drawing translation) and the game's own eye is put
+   back at the next 8002953c entry (the rcam_game / rcam_ours mechanism), so the game's follow logic never sees it.
+   The matrix is built from the exact direction (as RUGRATS_RCAMEXACT). host_pad_buttons() gives the game no buttons
+   while the freecam is engaged (gameplay camera seen in the last 0.5 s), so the player stands still; menus, cutscenes
+   and the title keep their input. Controls (host_pad_raw, so key / pad bindings apply): Up / Down = fly along the view,
+   Left / Right = strafe, right stick (J L I K) = look, R1 / L1 = up / down, Cross held = x4, Square held = x1/4.
+   Starts at the current camera eye and direction (again after a level change or cutscene: gameplay camera gone > 1 s). Debug: RUGRATS_FREECAM=1 turns it on from the start (tests),
+   RUGRATS_FCLOG=1 logs the eye every game frame. */
+int hooks_freecam;
+static uint32_t fc_seen = 0x80000000u;  /* vblank of the last gameplay camera update */
+static double fc_eye[3], fc_yaw, fc_pitch;
+int hooks_freecam_engaged(void) { return hooks_freecam && fc_on && hooks_frame() - fc_seen < 30u; }
+static void fc_matrix(uint32_t m, const double eye[3], const double tgt[3]) {   /* rows as in 800211e8 */
+    double f[3] = { tgt[0] - eye[0], tgt[1] - eye[1], tgt[2] - eye[2] };
+    double fl = sqrt(f[0] * f[0] + f[1] * f[1] + f[2] * f[2]);
+    if (fl < 1e-9) return;
+    for (int a = 0; a < 3; a++) f[a] /= fl;
+    double r0[3] = { f[2], 0, -f[0] }, r1[3] = { -f[0] * f[1], f[0] * f[0] + f[2] * f[2], -f[1] * f[2] };
+    double r2[3] = { r0[1] * r1[2] - r0[2] * r1[1], r0[2] * r1[0] - r0[0] * r1[2], r0[0] * r1[1] - r0[1] * r1[0] };
+    double q0[3] = { r1[1] * r2[2] - r1[2] * r2[1], r1[2] * r2[0] - r1[0] * r2[2], r1[0] * r2[1] - r1[1] * r2[0] };
+    double *rows[3] = { q0, r1, r2 };
+    for (int i = 0; i < 3; i++) {
+        double l = sqrt(rows[i][0] * rows[i][0] + rows[i][1] * rows[i][1] + rows[i][2] * rows[i][2]);
+        if (l < 1e-9) return;
+        for (int j = 0; j < 3; j++) mem_w16(m + (uint32_t)(i * 3 + j) * 2, (uint16_t)(int16_t)lround(rows[i][j] / l * 4096.0));
+    }
+}
+/* once per game frame from 8002953c (gameplay camera update): input -> eye / angles */
+static void fc_update(uint32_t cam) {
+    static int lg = -1;
+    if (lg < 0) { const char *e = getenv("RUGRATS_FREECAM"); if (e && atoi(e)) hooks_freecam = 1; lg = getenv("RUGRATS_FCLOG") != NULL; }
+    uint32_t ticks = mem_r32(0x800C3E80u + 156);
+    if (ticks > 40) ticks = 40;
+    if (hooks_frame() - fc_seen > 60u) fc_on = 0;   /* camera gone > 1 s (level change, cutscene): start again from it */
+    fc_seen = hooks_frame();
+    if (!hooks_freecam) { fc_on = 0; return; }
+    if (!fc_on) {   /* start where the camera is: its eye, looking along the matrix's view row (row 2 = forward) */
+        for (int a = 0; a < 3; a++) fc_eye[a] = (int32_t)mem_r32(cam + 0x14 + 4u * a);
+        double fx = (int16_t)mem_r16(cam + 12), fy = (int16_t)mem_r16(cam + 14), fz = (int16_t)mem_r16(cam + 16);
+        fc_yaw = atan2(fz, fx);
+        fc_pitch = atan2(-fy, sqrt(fx * fx + fz * fz));   /* y is down: positive pitch = looking up */
+        fc_on = 1;
+        rt_logf("freecam: on at %.0f %.0f %.0f yaw %.1f pitch %.1f\n", fc_eye[0], fc_eye[1], fc_eye[2],
+                fc_yaw * 57.2958, fc_pitch * 57.2958);
+    }
+    const double dt = ticks / 300.0;
+    float sx = 0, sy = 0;
+    host_rstick(&sx, &sy);
+    if (opt.rcam_invert) sy = -sy;
+    fc_yaw = wrap_pi(fc_yaw - sx * 2.5 * dt);           /* stick right = turn right (as the right-stick camera) */
+    fc_pitch += sy * 1.8 * dt;
+    if (fc_pitch > 1.5) fc_pitch = 1.5;
+    if (fc_pitch < -1.5) fc_pitch = -1.5;
+    const uint16_t b = (uint16_t)~host_pad_raw(0);      /* active high */
+    double speed = 3000;                                 /* world units per second (camera follow distance ~4096) */
+    if (b & 0x4000) speed *= 4;                          /* Cross */
+    if (b & 0x8000) speed /= 4;                          /* Square */
+    const double cp = cos(fc_pitch), f[3] = { cp * cos(fc_yaw), -sin(fc_pitch), cp * sin(fc_yaw) };
+    const double r[3] = { -sin(fc_yaw), 0, cos(fc_yaw) };   /* right of the view (y down, x/z as the game) */
+    double mv = ((b & 0x0010) ? 1 : 0) - ((b & 0x0040) ? 1 : 0), st = ((b & 0x0020) ? 1 : 0) - ((b & 0x0080) ? 1 : 0);
+    double up = ((b & 0x0800) ? 1 : 0) - ((b & 0x0400) ? 1 : 0);
+    for (int a = 0; a < 3; a++) fc_eye[a] += (f[a] * mv + r[a] * st) * speed * dt;
+    fc_eye[1] -= up * speed * dt;                        /* y down */
+    if (lg) rt_logf("freecam f%u eye %.0f %.0f %.0f yaw %.1f pitch %.1f buttons %04x\n", hooks_frame(), fc_eye[0], fc_eye[1],
+                    fc_eye[2], fc_yaw * 57.2958, fc_pitch * 57.2958, b);
+}
+/* the gameplay LookAt while the freecam is on: our eye and direction */
+static int fc_lookat(uint32_t cam) {
+    const uint32_t pe = cpu.r[4], pt = cpu.r[5], m = cpu.r[6];
+    const double cp = cos(fc_pitch);
+    double tg[3] = { fc_eye[0] + cp * cos(fc_yaw) * 4096, fc_eye[1] - sin(fc_pitch) * 4096, fc_eye[2] + cp * sin(fc_yaw) * 4096 };
+    for (int i = 0; i < 3; i++) {
+        const int32_t e = (int32_t)lround(fc_eye[i]);
+        rcam_game[i] = (int32_t)mem_r32(cam + 0x14 + i * 4);
+        mem_w32(pe + i * 4, (uint32_t)e);
+        mem_w32(pt + i * 4, (uint32_t)(int32_t)lround(tg[i]));
+        mem_w32(cam + 0x14 + i * 4, (uint32_t)e);
+        rcam_ours[i] = e;
+    }
+    rcam_cam = cam;
+    rcam_in_lookat = 1;
+    f_800211e8();                /* the original: its side effects (GTE registers, stack) */
+    rcam_in_lookat = 0;
+    fc_matrix(m, fc_eye, tg);
+    return 1;
+}
+
 int rt_hook_800211e8(void) {
     if (rcam_in_lookat) return 0;
+    if (hooks_freecam && fc_on && cpu.r[31] == 0x8001e928u && mem_r32(cpu.r[29] + 0xd0) == 0x80029df0u)
+        return fc_lookat(cpu.r[18]);
     if (!rcam_on()) return 0;
     if (cpu.r[31] != 0x8001e928u || mem_r32(cpu.r[29] + 0xd0) != 0x80029df0u) return 0; /* gameplay camera only */
     rcam_miss = 0;

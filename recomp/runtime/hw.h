@@ -113,6 +113,7 @@ void mdec_write(uint32_t off, uint32_t v);
 void host_init(void);
 void host_present(void);          /* show a frame, pump messages, pace */
 uint16_t host_pad_buttons(int port); /* PS1 active-low button mask */
+uint16_t host_pad_raw(int port);     /* same, ignoring game-side blocks (freecam input) */
 void host_rstick(float *x, float *y);  /* right stick for the camera: x right, y up, -1..1 */
 void host_audio_push(const int16_t *lr, int frames);
 int host_quit_requested(void);
