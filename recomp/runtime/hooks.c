@@ -1233,6 +1233,9 @@ static double rcam_r;                /* smoothed eye distance from the target (0
 #define RCAM_PLAYER 0x800E2B48u
 static float rcam_sx, rcam_sy;          /* stick this frame */
 static double rcam_dt;
+static uint32_t rcam_recenter, rcam_r1_prev; /* R1 pressed: snap our view to the game's "behind the player" direction
+                                                 (2 = waiting for the game's own camera to snap, 1 = snap frame) */
+static double rcam_rc_az0, rcam_rc_wait;      /* game azimuth when R1 was seen, seconds waited */
 
 /* the manual camera placed this frame's eye and the camera still holds it (portal hook: eye over the wall) */
 static int rcam_eye_in_use(uint32_t cam) {
@@ -1286,7 +1289,12 @@ int rt_hook_8002953c(void) {
     rcam_dt = ticks / 300.0;
     host_rstick(&rcam_sx, &rcam_sy);
     if (opt.rcam_invert) rcam_sy = -rcam_sy;
-    if (rcam_sx != 0 || rcam_sy != 0) rcam_idle = 0;
+    {   /* R1 = the game's own "camera behind the player": our view snaps there too (rcam_recenter) */
+        int r1 = !(host_pad_buttons(0) & 0x0800);
+        if (r1 && !rcam_r1_prev && (rcam_active || rcam_pitch != 0)) { rcam_recenter = 2; rcam_rc_wait = 0; }
+        rcam_r1_prev = r1;
+    }
+    if (rcam_sx != 0 || rcam_sy != 0) { rcam_idle = 0; rcam_recenter = 0; }
     else if (rcam_idle < 1000000) rcam_idle += ticks;
     if (rcam_miss < 1000000) rcam_miss += ticks;
     if (rcam_miss > 300) { rcam_active = 0; rcam_pitch = 0; rcam_pull = 0; rcam_rest_h = 0; } /* camera call gone for 1 s: back to the game */
@@ -1512,6 +1520,18 @@ int rt_hook_800211e8(void) {
         rcam_pitch *= k;
         if (fabs(rcam_pitch) < 0.005) rcam_pitch = 0;
     }
+    if (rcam_recenter == 1) rcam_recenter = 0; /* last frame's snap is placed */
+    if (rcam_recenter == 2) { /* the game snaps its own camera 2 game frames after the press; wait for that (or 0.1 s
+                                 if it was already behind), then take its direction in one frame, like the PS1 */
+        if (rcam_rc_wait == 0) rcam_rc_az0 = game_az;
+        rcam_rc_wait += rcam_dt;
+        if (fabs(wrap_pi(game_az - rcam_rc_az0)) > 0.02 || rcam_rc_wait > 0.1) {
+            if (rcam_active) rcam_az = game_az;   /* our camera stays in charge, now pointing the game's way */
+            rcam_pitch = 0;                       /* the game's height too */
+            rcam_pull = 0;                        /* place the eye at once (no 0.06 s follow / distance easing) */
+            rcam_recenter = 1;                    /* this frame: no wall search (the game's eye is valid there) */
+        }
+    }
     {   /* debug: RUGRATS_RCAMLOG=1 logs the camera inputs every game frame */
         static int lg = -1;
         if (lg < 0) lg = getenv("RUGRATS_RCAMLOG") != NULL;
@@ -1550,7 +1570,9 @@ int rt_hook_800211e8(void) {
         if (rcam_az_open(t, az, w2, r)) { rcam_pitch = el - w2; want = w2; }
     }
     double nh = r * cos(want);
-    if (!rcam_az_open(t, az, want, r)) { /* turned into solid ground (tunnels): nearest open direction, else the game's */
+    /* R1 snap frame: the game's own direction is valid, the edge search would stop it short (a hub pillar edge 65
+       degrees short, 2026-11-22); rcam_place still keeps the eye out of walls */
+    if (!rcam_recenter && !rcam_az_open(t, az, want, r)) { /* turned into solid ground (tunnels): nearest open direction, else the game's */
         double sg = wrap_pi(game_az - az) >= 0 ? 1 : -1, found = game_az;
         /* the stick just turned it from an open azimuth: stop at the edge between the two. The 6-degree search below
            snapped the view back one whole step every few frames while the stick was held against a pillar (whole
@@ -1671,6 +1693,7 @@ void hooks_rcam_state(StateIO *s) {
     ST(s, rcam_active); ST(s, rcam_miss); ST(s, rcam_h); ST(s, rcam_dy); ST(s, rcam_w);
     ST(s, rcam_pull); ST(s, rcam_eye);
     ST(s, rcam_rest_h); ST(s, rcam_rest_dy); ST(s, rcam_pp); ST(s, rcam_still); ST(s, rcam_tprev); ST(s, rcam_r);
+    ST(s, rcam_recenter); ST(s, rcam_r1_prev); ST(s, rcam_rc_az0); ST(s, rcam_rc_wait);
 }
 
 /* ---- golf aim speed (ini [game] golf_aim, F1 Game page) ---------------------------------------------------
