@@ -148,6 +148,12 @@ static uint32_t pkt_ring_kb(void) {
 }
 static void pkt_ring_place(void) {
     const uint32_t kb = pkt_ring_kb();
+    if (!kb && mem_r32(0x800DE3B4u) == PKT_EXT_BASE) {   /* RUGRATS_BIGRING=0 on a state made with the big ring: back
+                                                             to the game's own ring (emuref exports need lists < 2 MB) */
+        mem_w32(0x800DE3B0u, 0x80193E50u); mem_w32(0x800DE3B4u, 0x80193E50u); mem_w32(0x800DE3B8u, 0x801D8410u);
+        rt_logf("pkt ring moved back to the game's own 80193e50..801d8410\n");
+        return;
+    }
     if (!kb || mem_r32(0x800DE3B4u) == PKT_EXT_BASE) return;
     const uint32_t lo = mem_r32(0x800DE3B4u), hi = mem_r32(0x800DE3B8u);
     if (hi <= lo || lo < 0x80000000u || hi > 0x80200000u) return;   /* not set up yet */

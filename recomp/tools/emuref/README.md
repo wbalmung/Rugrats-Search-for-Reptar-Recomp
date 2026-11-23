@@ -74,3 +74,10 @@ b3c95f83a4e4d5ca7cc0c84949852f56fe14f124) was unzipped in that session's scratch
 (frames shown, whether the file ran out) by vsync; `DL_FORCE=<4|5>` swaps the first attract demo (always the call with
 index 3) for another one. Used 2026-11-13 to check the attract demo lengths. `INJECT_OFX=<px>` (inject.lua) forces the
 GTE screen x offset every run vsync, to look past the 4:3 screen edge (the game uses OFX 0 + the GPU draw offset).
+
+**2026-11-23:** states made with the big packet ring (0x80200000+, outside the PS1's 2 MB) freeze Redux after the
+injection (the OT links into memory it doesn't have). Load the state with `RUGRATS_BIGRING=0` (moves the ring back to
+the game's own 80193e50..801d8410; two "DMA2 list loop" lines on that frame are expected), save a new slot a few
+seconds later, and export that slot (again with `RUGRATS_BIGRING=0`). `INJECT_DUMPFROM=<k> INJECT_DUMPN=<n>` dump RAM
+at game frames k .. k+n-1 after the injection (default 1, 12; `INJECT_DUMPN=0` = none). Redux's CD drive is idle after
+the injection (our CD state is not injected), so the music stream and the CD status byte 0x800C2F84 differ from ours.

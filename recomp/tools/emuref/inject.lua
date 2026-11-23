@@ -55,9 +55,14 @@ local function phaseB()
 end
 
 local nframe = 0
+-- INJECT_DUMPFROM=<k> INJECT_DUMPN=<n>: dump game frames k .. k+n-1 after the injection (default 1, 12)
+local DUMPFROM = tonumber(os.getenv('INJECT_DUMPFROM') or '1')
+local DUMPN = tonumber(os.getenv('INJECT_DUMPN') or '12')
 local function frameDump()
-  if phase ~= 'run' or nframe >= 12 then return true end
+  if phase ~= 'run' then return true end
   nframe = nframe + 1
+  if nframe < DUMPFROM then return true end
+  if nframe >= DUMPFROM + DUMPN then return true end
   local mem = PCSX.getMemPtr()
   local f = io.open(string.format('%s/emu/ram_f%d.bin', DIR, nframe), 'wb'); f:write(ffi.string(mem, 0x200000)); f:close()
   local r = PCSX.getRegisters()
