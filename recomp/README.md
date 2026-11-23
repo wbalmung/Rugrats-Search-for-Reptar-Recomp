@@ -773,10 +773,21 @@ Pad: d-pad/left stick, A, B. All settings are written to `rugrats.ini` on close.
 `menu_items[]` in `runtime/host_win32.c` (label, value list, ini key, apply function, page).
 
 Pages (tabs): Display, Video (sub-heading Fixes), Audio/Input (sub-headings Audio, Input; Control Bindings...),
-Game, Enhancements. A row's `section` field draws a sub-heading above it. The launcher's Settings tab mirrors the same
-pages, sub-headings and a Control Bindings dialog (`SETTINGS` / `SECTIONS` / `BINDINGS` in launcher.py). The actions (Quick save, Quick load, Resume, Quit game; page `T_ACTIONS`)
+Game, Enhancements, Debug. A row's `section` field draws a sub-heading above it. The launcher's Settings tab mirrors the same
+pages (not Debug: its rows are live game values, not settings), sub-headings and a Control Bindings dialog (`SETTINGS` / `SECTIONS` / `BINDINGS` in launcher.py). The actions (Quick save, Quick load, Resume, Quit game; page `T_ACTIONS`)
 are pinned at the bottom of every page. Switch pages with Q / E, Tab / Shift+Tab, PgUp / PgDn, LB / RB (L1 / R1 on
 Sony pads), a click on a tab, or the mouse wheel over the tab bar. The last page stays selected between openings.
+
+Debug page (2026-11-23): "Puzzle pieces" (0..12) and "Reptar bars" (0..99) the player has, read from game RAM each time
+the menu opens and written on every change; not in the ini. Before any level has run (title screen) both show "In game
+only" and ignore changes. Progress RAM (hooks.c `hooks_dbg_*`): pieces earned bitmask `0x800C56BC` (s16, bit = piece
+0..11), placed `0x800C56BE`; bars taken per level `0x800C56C0 + 4*db` (bit = that level's bar), spent
+`0x800C5740 + 4*db`; bars held = taken - spent; 15 held + under 12 pieces = the next pickup spends 15 and earns a piece.
+Fewer bars = spend held ones (spare first); more = unspend spent ones, then mark bars taken in db 8 (leftover level)
+and db 19 (unused), so no real bar ever disappears from a level. Fewer pieces = unplaced pieces go first (highest
+first), then placed ones; more = the lowest unearned pieces, unplaced. The memory card save keeps whatever is set.
+Test helper: `RUGRATS_MENU_KEYS=<keys>` with `RUGRATS_MENU=<frame>` (+ `RUGRATS_MENU_TAB=<page>`): one key per menu
+step, U D L R = arrows, 0 = shot (`shots/menuN.bmp`), then the menu closes. Logs `debug: pieces ...` / `debug: bars ...`.
 
 Music / Sound effects / Dialogue volume (Audio page, ini `[audio] music`, `sfx`, `dialogue`, 0..100, default 100;
 `RUGRATS_VOLS=<music>,<sfx>,<dialogue>`): applied per SPU voice in the mixer. libsnd's sequencer only uses voices below

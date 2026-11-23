@@ -1183,8 +1183,8 @@ typedef struct {
     int tab;                        /* page (T_*); T_ACTIONS rows show under every page */
     const char *section;            /* non-NULL: a sub-heading row with this text is drawn above the row */
 } MenuItem;
-enum { T_DISPLAY, T_VIDEO, T_AUDIO, T_GAME, T_ENH, T_COUNT, T_ACTIONS = T_COUNT };
-static const char *const tab_names[T_COUNT] = { "Display", "Video", "Audio/Input", "Game", "Enhancements" };
+enum { T_DISPLAY, T_VIDEO, T_AUDIO, T_GAME, T_ENH, T_DEBUG, T_COUNT, T_ACTIONS = T_COUNT };
+static const char *const tab_names[T_COUNT] = { "Display", "Video", "Audio/Input", "Game", "Enhancements", "Debug" };
 /* left edge of tab t (t = T_COUNT: right end) in a bar from a to b; widths follow the label lengths */
 static int tab_edge(int t, int a, int b) {
     int tot = 0, cum = 0;
@@ -1257,6 +1257,29 @@ static void ac_qload(void) { state_request(0, state_slot); menu_open = 0; pad_bl
 static const int v_slot[] = { 1, 2, 3, 4 };
 static void show_slot(int v, char *out, int n) { snprintf(out, n, "%d%s", v, state_slot_exists(v) ? "  (used)" : "  (empty)"); }
 static void ac_quit(void) { confirm_open(1); }
+/* Debug page: puzzle pieces / Reptar bars, read from game RAM when the menu opens, written on change (hooks.c
+   hooks_dbg_*). Only once a level has run (hooks_level >= 1): before that the progress block is not the player's. */
+extern int hooks_level;
+int hooks_dbg_pieces(void), hooks_dbg_bars(void);
+void hooks_dbg_set_pieces(int n), hooks_dbg_set_bars(int n);
+static int dbg_pieces, dbg_bars;
+static int v_pieces[13], v_bars[100];
+static int dbg_ingame(void) { return hooks_level >= 1; }
+static void dbg_sync(void) {
+    for (int i = 0; i < 13; i++) v_pieces[i] = i;
+    for (int i = 0; i < 100; i++) v_bars[i] = i;
+    dbg_pieces = dbg_ingame() ? hooks_dbg_pieces() : 0;
+    dbg_bars = dbg_ingame() ? hooks_dbg_bars() : 0;
+    if (dbg_bars > 99) dbg_bars = 99;
+}
+static void ap_pieces(void) { if (dbg_ingame()) hooks_dbg_set_pieces(dbg_pieces); dbg_sync(); }
+static void ap_bars(void) { if (dbg_ingame()) hooks_dbg_set_bars(dbg_bars); dbg_sync(); }
+static void show_pieces(int v, char *out, int n) {
+    if (!dbg_ingame()) snprintf(out, n, "In game only"); else snprintf(out, n, "%d of 12", v);
+}
+static void show_bars(int v, char *out, int n) {
+    if (!dbg_ingame()) snprintf(out, n, "In game only"); else snprintf(out, n, "%d", v);
+}
 
 static MenuItem menu_items[] = {
     { "Window size", MI_CHOICE, &opt.scale, v_scale, 6, NULL, NULL, show_scale, "video", "scale", ap_window,
@@ -1363,6 +1386,12 @@ static MenuItem menu_items[] = {
       "textures_dump next to the game (GPU renderer). See MODDING.md.", T_GAME },
     { "Mods...", MI_ACTION, NULL, NULL, 0, NULL, NULL, NULL, NULL, NULL, ac_mods,  /* last on its page */
       "Turn installed mods on or off (cheats and RAM patches take effect right away). Add mods with the launcher.", T_GAME },
+    { "Puzzle pieces", MI_CHOICE, &dbg_pieces, v_pieces, 13, NULL, NULL, show_pieces, NULL, NULL, ap_pieces,
+      "Pieces you have earned. Fewer: unplaced pieces go first. More: new pieces wait in the puzzle screen. 12 opens the "
+      "final level. Changes your progress (saved with the next memory card save).", T_DEBUG },
+    { "Reptar bars", MI_CHOICE, &dbg_bars, v_bars, 100, NULL, NULL, show_bars, NULL, NULL, ap_bars,
+      "Bars you are holding. No bar disappears from a level. At 15 or more the next bar you pick up earns a puzzle "
+      "piece (under 12 pieces).", T_DEBUG },
     { "Quick save", MI_ACTION, NULL, NULL, 0, NULL, NULL, NULL, NULL, NULL, ac_qsave,
       "Save the game right here (during gameplay). Keyboard: F5.", T_ACTIONS },
     { "Quick load", MI_ACTION, NULL, NULL, 0, NULL, NULL, NULL, NULL, NULL, ac_qload,
@@ -2271,6 +2300,21 @@ static void menu_test_step(int step) {
         if (step > 4) menu_open = 0;
         return;
     }
+    /* RUGRATS_MENU_KEYS=<keys>: one key per step, U D L R = arrows, 0 = shot (menuN), then close; with
+       RUGRATS_MENU_TAB=<page> that page is shown first (e.g. TAB=5 KEYS=0RR0D0LL0 for the Debug page) */
+    const char *mk = getenv("RUGRATS_MENU_KEYS");
+    if (mk) {
+        const char *t = getenv("RUGRATS_MENU_TAB");
+        if (step == 0) { if (t) menu_set_tab(atoi(t)); return; }
+        if (step - 1 >= (int)strlen(mk)) { menu_open = 0; return; }
+        const char c = mk[step - 1];
+        if (c == '0') {
+            char n[32]; snprintf(n, sizeof n, "menu%d", shot++);
+            if (back_px) write_bmp(n, back_px, back_w, back_h);
+            rt_logf("menu test: %s tab %d row %d\n", n, menu_tab, menu_sel);
+        } else menu_key(c == 'U' ? VK_UP : c == 'D' ? VK_DOWN : c == 'L' ? VK_LEFT : VK_RIGHT);
+        return;
+    }
     /* RUGRATS_MENU_ESC=1: the quit prompt instead (No shot, Yes shot, then =1 cancels with Esc, =2 quits) */
     static const int esc_cancel[] = { 0, VK_RIGHT, 0, VK_ESCAPE }, esc_quit[] = { 0, VK_RIGHT, 0, VK_RETURN };
     const char *esc = getenv("RUGRATS_MENU_ESC");
@@ -2297,6 +2341,7 @@ static void menu_run(void) {
     convert_frame(); /* the menu draws over the 32-bit frame */
     menu_bg_reset();
     want_fs = fullscreen;
+    dbg_sync();
     menu_sel = 0;
     lvl_open = 0;
     mod_open = 0;

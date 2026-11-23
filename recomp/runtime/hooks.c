@@ -4609,3 +4609,71 @@ void hooks_night_state(StateIO *s) {
     }
 }
 void hooks_night_frame(void) { night_frame(); }
+
+/* ---- F1 Debug page: puzzle pieces and Reptar bars (2026-11-23, user) ---------------------------------------------
+   Game progress block at 0x800C5678 (db) + ...:
+   - 0x800C56BC s16: pieces earned (bit n = piece n, 0..11; count = popcount capped at 12, 80094b8c / 80091d00);
+     0x800C56BE s16: pieces placed in the puzzle (80091d28). 80091d50 earns a random unearned piece.
+   - 0x800C56C0 + 4*db: bars taken in level db (bit = that level's bar number; 80094a58 / 80091b40 on pickup, a taken
+     bar does not come back); 0x800C5740 + 4*db: bars spent (80091c14 / 80091b90 mark taken bars spent, db 1..31).
+     Bars on hand = popcount(taken[0..31]) - popcount(spent[0..31]) (80094a0c); 15 on hand + under 12 pieces = the
+     next pickup spends 15 and earns a piece (80094924).
+   Setting the bar count: fewer = spend unspent bars (spare dbs first), more = unspend spent bars, then add taken bits in
+   db 8 (a leftover level, never played) and db 19 (unused); real levels never get bars marked taken, so no bar
+   disappears from a level. Setting the piece count: fewer = drop unplaced pieces first (highest number first), then
+   placed ones; more = add the lowest unearned pieces (unplaced, they show up in the puzzle screen like earned ones). */
+#define PG_EARNED 0x800C56BCu
+#define PG_PLACED 0x800C56BEu
+#define PG_TAKEN  0x800C56C0u
+#define PG_SPENT  0x800C5740u
+static const int pg_spare[2] = { 8, 19 };
+static int pg_pop(uint32_t v) { int n = 0; while (v) { n += v & 1u; v >>= 1; } return n; }
+int hooks_dbg_pieces(void) { const int n = pg_pop(mem_r16(PG_EARNED) & 0xfffu); return n > 12 ? 12 : n; }
+int hooks_dbg_bars(void) {
+    int n = 0;
+    for (int db = 0; db < 32; db++) n += pg_pop(mem_r32(PG_TAKEN + 4u * db)) - pg_pop(mem_r32(PG_SPENT + 4u * db));
+    return n;
+}
+void hooks_dbg_set_pieces(int want) {
+    if (want < 0) want = 0;
+    if (want > 12) want = 12;
+    uint32_t e = mem_r16(PG_EARNED) & 0xfffu, p = mem_r16(PG_PLACED) & 0xfffu;
+    for (int pass = 0; pass < 2 && pg_pop(e) > want; pass++)          /* unplaced first, then placed */
+        for (int b = 11; b >= 0 && pg_pop(e) > want; b--)
+            if ((e >> b & 1u) && (pass || !(p >> b & 1u))) e &= ~(1u << b);
+    for (int b = 0; b < 12 && pg_pop(e) < want; b++) e |= 1u << b;
+    p &= e;
+    mem_w16(PG_EARNED, (uint16_t)((mem_r16(PG_EARNED) & 0xf000u) | e));
+    mem_w16(PG_PLACED, (uint16_t)((mem_r16(PG_PLACED) & 0xf000u) | p));
+    rt_logf("debug: pieces %d (earned %03x placed %03x)\n", pg_pop(e), e, p);
+}
+static int pg_is_spare(int db) { return db == pg_spare[0] || db == pg_spare[1]; }
+void hooks_dbg_set_bars(int want) {
+    if (want < 0) want = 0;
+    int have = hooks_dbg_bars();
+    /* fewer: take back spare-db bars (clear taken bits that are not spent), then spend real ones */
+    for (int i = 0; i < 2 && have > want; i++) {
+        const uint32_t t = PG_TAKEN + 4u * pg_spare[i], s = PG_SPENT + 4u * pg_spare[i];
+        for (int b = 31; b >= 0 && have > want; b--)
+            if ((mem_r32(t) >> b & 1u) && !(mem_r32(s) >> b & 1u)) { mem_w32(t, mem_r32(t) & ~(1u << b)); have--; }
+    }
+    for (int db = 1; db < 32 && have > want; db++) {
+        if (pg_is_spare(db)) continue;
+        const uint32_t t = PG_TAKEN + 4u * db, s = PG_SPENT + 4u * db;
+        for (int b = 0; b < 32 && have > want; b++)
+            if ((mem_r32(t) >> b & 1u) && !(mem_r32(s) >> b & 1u)) { mem_w32(s, mem_r32(s) | 1u << b); have--; }
+    }
+    /* more: unspend real bars, then add bars in the spare dbs */
+    for (int db = 1; db < 32 && have < want; db++) {
+        const uint32_t t = PG_TAKEN + 4u * db, s = PG_SPENT + 4u * db;
+        for (int b = 0; b < 32 && have < want; b++)
+            if ((mem_r32(t) >> b & 1u) && (mem_r32(s) >> b & 1u)) { mem_w32(s, mem_r32(s) & ~(1u << b)); have++; }
+    }
+    for (int i = 0; i < 2 && have < want; i++) {
+        const uint32_t t = PG_TAKEN + 4u * pg_spare[i], s = PG_SPENT + 4u * pg_spare[i];
+        for (int b = 0; b < 32 && have < want; b++)
+            if (!(mem_r32(t) >> b & 1u)) { mem_w32(t, mem_r32(t) | 1u << b); mem_w32(s, mem_r32(s) & ~(1u << b)); have++; }
+    }
+    rt_logf("debug: bars %d (wanted %d)\n", hooks_dbg_bars(), want);
+}
+
