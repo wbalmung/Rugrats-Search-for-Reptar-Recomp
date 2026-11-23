@@ -2007,7 +2007,7 @@ static void menu_draw_panel(HDC dc, int cw, int ch) {
     int rowh = ch / (R + 9);
     if (rowh > cw / 22) rowh = cw / 22;
     if (rowh < 14) rowh = 14;
-    int pw = rowh * 17;
+    int pw = rowh * 21;   /* was 17: six tabs (Debug, 2026-11-23) were cramped */
     if (pw > cw - 8) pw = cw - 8;
     int ph = rowh * (R + 7);
     int x0 = (cw - pw) / 2, y0 = (ch - ph) / 2, pad = rowh / 2;
