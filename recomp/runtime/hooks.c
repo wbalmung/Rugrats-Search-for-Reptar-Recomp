@@ -1499,14 +1499,21 @@ int rt_hook_800211e8(void) {
     double az_before = rcam_az;   /* azimuth before this frame's stick turn (open last frame) */
     int was_active = rcam_active != 0;
     if (rcam_sx != 0) {
-        if (!rcam_active) { rcam_active = 1; rcam_az = game_az; rcam_h = rcam_rest_h; rcam_dy = rcam_rest_dy; rcam_w = 1; }
+        if (!rcam_active) { rcam_active = 1; rcam_az = game_az; rcam_h = h; rcam_dy = rcam_rest_dy; rcam_w = 1; }
         rcam_az = wrap_pi(rcam_az - rcam_sx * yaw_speed * rcam_dt); /* stick right = view turns right */
         rcam_w = 1;
     }
     rcam_pitch += rcam_sy * pitch_speed * rcam_dt;
-    if (rcam_active) { /* ease toward the resting distance / height (time constant ~1 s) */
+    if (rcam_active) { /* ease toward the default distance / resting height (time constant ~1 s), moving or not.
+                          Distance = the game's own ideal follow distance gp+0xbcc (set at level start by 80025e90:
+                          0x1900 = 6400 in Reptar 2010 (db 7), else 0x1000 = 4096; the game's R1 snap puts its eye
+                          exactly there). The learned resting distance followed the game's lazy follow camera, which
+                          stops wherever the player stops (3254 in the hub, 6173 in space), so a too close / too far
+                          view stayed until the player stood still again (user, 2026-11-22). */
         double k = 1 - exp(-rcam_dt / 1.0);
-        rcam_h += (rcam_rest_h - rcam_h) * k;
+        int32_t ideal = (int32_t)mem_r32(0x800C3E80u + 0xbcc);
+        double def_h = ideal >= 1000 && ideal <= 20000 ? ideal : rcam_rest_h;
+        rcam_h += (def_h - rcam_h) * k;
         rcam_dy += (rcam_rest_dy - rcam_dy) * k;
     }
     if (opt.rcam == 2 && rcam_idle > 450) { /* 1.5 s untouched: ease back to the game's camera */
