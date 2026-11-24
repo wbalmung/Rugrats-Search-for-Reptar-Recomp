@@ -2781,10 +2781,43 @@ static void near_begin(uint32_t obj) {
     near_slot = k;
     near_hide = near_tab[k].hidden;
 }
+/* Lights-off darkness in widescreen (2026-11-23, user: Visitors from Outer Space intro, Stu turns the nursery light
+   off; the dark covered the middle only, bright strips at both 16:9 edges). The darkness is not 2D: it is a world
+   object (hub bank db 1, where the level intros run; obj+0x38 = 0x03000202, prop list ra 80033a10; model: 9 vertices,
+   flat, x +-2580 y +-2048) - a flat semi-transparent panel the game keeps
+   about 5100 units in front of the camera, sized to just cover a 4:3 view (+-4150 x at that depth = SX +-233 of the
+   +-256 drawing area after the 3/4 squeeze; unsqueezed +-311). It is drawn without the widescreen squeeze, so it is
+   4/3 wider and covers the whole 16:9 picture (the panel is flat and plain, nothing on it looks stretched).
+   It is also drawn with no hi-res depth (gte_dcls DCLS_NONE): while the camera swings into the shot the panel stands
+   at an angle (left side z ~4960, right ~2800) and the depth check hid it behind the near floor, leaving a bright
+   triangle in the bottom-left corner (4:3 too). The PS1 has no depth buffer; the game sorts the panel over the room.
+   And its depth (SZ) is reported at 1/4 while it is projected (gte_near_sort, gte.c), so the game's ordering table puts
+   it in front of the room: in a few frames of that swing near floor quads (z 3300-4300) sorted after the angled panel
+   (z 4200-5000) and drew over it, a thin bright sliver along the bottom-left (original game, 4:3 too). Side effect:
+   things between the panel and ~1/4 of its distance (props near the camera) are darkened too, as the lights-off
+   scene means.
+   Match the whole obj+0x38 word: the high half 0x300 alone is a prop kind shared with other hub props - the first
+   version (high half only) also caught the Reptar doll downstairs (0x03000206, 2026-11-23, user: doll shows through
+   the upstairs floor with the stick camera turned: no depth test + sorted to the front).
+   RUGRATS_DARKPANEL=0 = old. */
+static int dark_panel(uint32_t obj) {
+    static int on = -1;
+    if (on < 0) { const char *e = getenv("RUGRATS_DARKPANEL"); on = e ? atoi(e) != 0 : 1; }
+    return on && opt.widescreen && obj && cpu.r[31] == 0x80033a10u && mem_r32(0x800C5678u) == 1 &&
+           mem_r32(obj + 0x38) == 0x03000202u;
+}
 int rt_hook_80031b84(void) {
     static int in;
     if (!in) { void hooks_night_obj(uint32_t obj); hooks_night_obj(cpu.r[4]); }   /* "Let There Be Light" Fixes */
     if (!in) { void hooks_spin_far(uint32_t obj); hooks_spin_far(cpu.r[4]); }     /* spinners in inactive rooms */
+    if (!in && dark_panel(cpu.r[4])) {   /* Visitors from Outer Space lights-off panel: no widescreen squeeze */
+        const int prev = gte_dcls;
+        opt.widescreen = 0; gte_dcls = DCLS_NONE; gte_near_sort = 1; in = 1;
+        f_80031b84();
+        opt.widescreen = 1; gte_dcls = prev; gte_near_sort = 0; in = 0;
+        near_pass = 0; near_hide = 0; near_slot = -1;
+        return 1;
+    }
     const int r = obj_draw(f_80031b84, &in, DCLS_OBJ);
     if (r) { near_pass = 0; near_hide = 0; near_slot = -1; }
     return r;

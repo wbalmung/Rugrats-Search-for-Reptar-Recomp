@@ -264,6 +264,7 @@ void gte_write(int r, uint32_t v) {
 /* widescreen horizontal squeeze (3/4 = 16:9 from 4:3); RUGRATS_WSX=<num>,<den> overrides it (debug: a stronger
    squeeze shows what the game culls against its 4:3 view as empty side bands) */
 static int64_t ws_num = 3, ws_den = 4;
+int gte_near_sort;   /* 1 = SZ at 1/4 (screen position unchanged), so the game sorts the faces near the front (hooks.c dark_panel) */
 /* the same squeeze for guest code that projects on the CPU (portal culling hook) */
 void gte_proj_params(double *ox, double *oy, double *h, double *w) {   /* SX = h * w * X / Z + ox, SY = h * Y / Z + oy */
     *ox = OFX / 65536.0; *oy = OFY / 65536.0; *h = H ? H : 1; *w = opt.widescreen ? (double)ws_num / (double)ws_den : 1.0;
@@ -309,6 +310,7 @@ static void rtp(int i, int last) {
     }
     push_z(z >> 12);
     uint32_t q = gte_divide(H, SZ[3]);
+    if (gte_near_sort) SZ[3] /= 4;   /* hooks.c dark_panel: sorted in front of the room (projection above uses the real z) */
     int64_t px = (int64_t)q * IR[1];
     if (opt.widescreen) {
         /* Widescreen: project x from the unclamped camera-space x when IR1 saturates (|x| > 32767). The hardware

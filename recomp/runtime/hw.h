@@ -53,6 +53,7 @@ void subpx_world(uint32_t sxy);                       /* room / object point wit
 enum { DCLS_NONE, DCLS_ROOM, DCLS_OBJ };
 extern uint32_t gte_world_n;                           /* GTE points of room geometry since the frame's first layer (gte.c; Stretch 2D) */
 extern int gpu_world_frame;                            /* 1 = the frame being drawn shows the 3D world (hw.c layer_note) */
+extern int gte_near_sort;                              /* 1 = SZ at 1/4: the game sorts the faces near the front (gte.c; hooks.c dark_panel) */
 extern int gte_dcls;                                   /* kind of geometry the GTE projects now (hooks.c) */
 extern uint32_t gte_backface_frame;                    /* present_count when room back faces are drawn (hooks.c, eye over the wall) */
 void gpu_backface_note(const int16_t sxy[3][2]);        /* gte.c NCLIP: this screen triangle was a back face we let through */
