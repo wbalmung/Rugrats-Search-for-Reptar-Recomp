@@ -181,8 +181,12 @@ static void show_vert(const uint8_t *r, uint32_t i, int32_t v[3]) {
 #define SHOW_NP 128
 static int16_t remap[256];
 static float show_scale = 1.0f;   /* model size (Duke and the Pig Cop are drawn bigger, see build_showcase) */
+/* parts that are open shells (no front faces), drawn from both sides: 222 = the lizard trooper's pelvis (user
+   2026-11-24: "part of the pelvis is invisible, but only from the front") */
+static int show_two_sided(uint32_t slot) { return slot == 222; }
 static void show_model(uint32_t slot, const int32_t pos[3]) {
     uint32_t nv;
+    const int two = show_two_sided(slot);
     const uint8_t *r = show_rec(slot, &nv);
     if (!r || !nv || nv > 256) return;
     int32_t mv[256][3];
@@ -206,7 +210,7 @@ static void show_model(uint32_t slot, const int32_t pos[3]) {
             if (e[4] >= nv || e[5] >= nv || e[6] >= nv || (quad && e[7] >= nv)) continue;
             int need = 0;
             for (int k = 0; k < n; k++) need += remap[e[4 + k]] < 0;
-            if (snv + need > SHOW_NV || sqn + strn + 1 > SHOW_NP) {
+            if (snv + need > SHOW_NV || sqn + strn + 1 + two > SHOW_NP) {
                 show_flush();
                 for (uint32_t i = 0; i < 256; i++) remap[i] = -1;
             }
@@ -225,6 +229,14 @@ static void show_model(uint32_t slot, const int32_t pos[3]) {
             uint32_t ti = conv_tex(tx, quad);
             memcpy(rec + 4, &ti, 4);
             if (quad) { put(&sq, rec, 8); sqn++; } else { put(&stri, rec, 8); strn++; }
+            if (two) {   /* the same face wound the other way: vertices 1 and 2 swapped, and their UVs */
+                uint8_t bk[8], t2[12];
+                memcpy(bk, rec, 8); bk[1] = rec[2]; bk[2] = rec[1];
+                memcpy(t2, tx, 12); memcpy(t2 + 4, tx + 8, 2); memcpy(t2 + 8, tx + 4, 2);
+                uint32_t t2i = conv_tex(t2, quad);
+                memcpy(bk + 4, &t2i, 4);
+                if (quad) { put(&sq, bk, 8); sqn++; } else { put(&stri, bk, 8); strn++; }
+            }
             /* face normal into its vertices (for the baked light) */
             SVert *A = &sv[rec[0]], *B = &sv[rec[1]], *C = &sv[rec[2]];
             float ux = B->x - A->x, uy = B->y - A->y, uz = B->z - A->z, wx = C->x - A->x, wy = C->y - A->y, wz = C->z - A->z;
