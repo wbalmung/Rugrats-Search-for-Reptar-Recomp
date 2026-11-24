@@ -3403,6 +3403,8 @@ static const struct { uint8_t db; uint8_t who; uint16_t id; } restore_speaker[] 
        swapped in only for a request of one of those 10 lines. (The Return of Mr. Friend, db 14, runs with the hub's
        voice bank: none of Mr. Friend's lines are loaded there, the game's own included.) */
     {9, RS_CHASE, 1135},
+    /* Taken out by ear (user, 2026-11-24): 1052 in 7 Voyages of Cynthia, 1118 in Chuckie's Glasses, 686 in Gold Rush. */
+    {4, RS_SKIP, 1052}, {10, RS_SKIP, 1118}, {17, RS_SKIP, 686},
     /* Incident on Aisle 7: its chatter 80080330 (timer gp+0xe40), while the pie gallery runs (level word 0x800C56A8
        & 8), picks rand & 7 of the deli clerks' list 0x800B92DC [1067 1074 1075 1078 1081 1082 1085 1086], gap 2000
        ticks (6.7 s); outside it Tommy's lines. 1073 1080 1083 1084 are the clerks' other clips (sorted by ear by the
