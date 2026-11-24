@@ -180,6 +180,7 @@ static void show_vert(const uint8_t *r, uint32_t i, int32_t v[3]) {
 #define SHOW_NV 110
 #define SHOW_NP 128
 static int16_t remap[256];
+static float show_scale = 1.0f;   /* model size (Duke and the Pig Cop are drawn bigger, see build_showcase) */
 static void show_model(uint32_t slot, const int32_t pos[3]) {
     uint32_t nv;
     const uint8_t *r = show_rec(slot, &nv);
@@ -188,7 +189,9 @@ static void show_model(uint32_t slot, const int32_t pos[3]) {
     for (uint32_t i = 0; i < nv; i++) {
         int32_t v[3];
         show_vert(r, i, v);
-        mv[i][0] = pos[0] - v[0] - show_org[0]; mv[i][1] = pos[1] + v[1] - show_org[1]; mv[i][2] = pos[2] - v[2] - show_org[2];
+        mv[i][0] = pos[0] - (int32_t)lroundf(v[0] * show_scale) - show_org[0];
+        mv[i][1] = pos[1] + (int32_t)lroundf(v[1] * show_scale) - show_org[1];
+        mv[i][2] = pos[2] - (int32_t)lroundf(v[2] * show_scale) - show_org[2];
     }
     for (uint32_t i = 0; i < 256; i++) remap[i] = -1;
     static const uint8_t rs[64] = { [0x3c] = 20, [0x34] = 20, [0x2c] = 24, [0x24] = 24, [0x28] = 12, [0x30] = 8 };
@@ -251,7 +254,10 @@ static void build_showcase(const uint8_t *mod, uint32_t modn, const uint8_t *hie
     for (int k = 0; k < 3; k++) show_org[k] = (int32_t)rd32(room_hdr + 4 * k);
     const int32_t floor_y = (int32_t)rd32(room_hdr + 36) + 1;   /* room max y = its floor */
     uint8_t used[768] = { 0 };
-    /* back row: the jointed characters, origin on the floor (the brain alien keeps its hover height) */
+    /* back row: the jointed characters, origin on the floor (the brain alien keeps its hover height). Their models
+       are much smaller than Tommy (DB16: 1421 units from feet to head top; Duke 881, Pig Cop 921), so skeletons 0
+       and 1 (Duke, Pig Cop; user 2026-11-24: "at least as tall as Tommy") are scaled to SHOW_TALL. */
+#define SHOW_TALL 1560
     static const int32_t char_x[4] = { -29300, -27100, -24900, -22700 };
     int nc = 0;
     for (uint32_t sk = 0; sk < 256 && nc < 4; sk++) {
@@ -260,6 +266,23 @@ static void build_showcase(const uint8_t *mod, uint32_t modn, const uint8_t *hie
         uint32_t parts = rd16(hie + o), hdr = 44;
         if (o + hdr + 40 * parts > hien || parts > 32) continue;
         int32_t stack[8][3], pos[3];
+        show_scale = 1.0f;
+        if (sk == 0 || sk == 1) {   /* assembled height: highest vertex above the origin (y is down) */
+            int32_t top = 0;
+            for (uint32_t j = 0; j < parts; j++) {
+                const uint8_t *pr = hie + o + hdr + 40 * j;
+                uint32_t depth = rd16(pr + 2), slot = rd32(pr + 36), nv;
+                if (depth < 1 || depth > 8 || slot >= 768) break;
+                for (int k = 0; k < 3; k++)
+                    stack[depth - 1][k] = (depth > 1 ? stack[depth - 2][k] : 0) + (int32_t)rd32(pr + 20 + 4 * k);
+                const uint8_t *r = show_rec(slot, &nv);
+                for (uint32_t i = 0; r && i < nv && i < 256; i++) {
+                    int32_t v[3]; show_vert(r, i, v);
+                    if (-(v[1] + stack[depth - 1][1]) > top) top = -(v[1] + stack[depth - 1][1]);
+                }
+            }
+            if (top > 0 && top < SHOW_TALL) show_scale = (float)SHOW_TALL / (float)top;
+        }
         for (uint32_t j = 0; j < parts; j++) {
             const uint8_t *pr = hie + o + hdr + 40 * j;
             uint32_t depth = rd16(pr + 2), slot = rd32(pr + 36);
@@ -269,12 +292,15 @@ static void build_showcase(const uint8_t *mod, uint32_t modn, const uint8_t *hie
                 stack[depth - 1][k] = (depth > 1 ? stack[depth - 2][k] : 0) + off;
             }
             /* turned 180: x and z of the part offset flip with the model (show_model negates model x/z) */
-            pos[0] = char_x[nc] - stack[depth - 1][0]; pos[1] = floor_y + stack[depth - 1][1];
-            pos[2] = -4300 - stack[depth - 1][2];
+            pos[0] = char_x[nc] - (int32_t)lroundf(stack[depth - 1][0] * show_scale);
+            pos[1] = floor_y + (int32_t)lroundf(stack[depth - 1][1] * show_scale);
+            pos[2] = -4300 - (int32_t)lroundf(stack[depth - 1][2] * show_scale);
             show_model(slot, pos);
             used[slot] = 1;
         }
         show_flush();
+        if (show_scale != 1.0f) rt_logf("icecream: showcase skeleton %u drawn %.2fx (%d units tall)\n", sk, (double)show_scale, SHOW_TALL);
+        show_scale = 1.0f;
         nc++;
     }
     /* front row: every model no skeleton uses (0 = the exporter's axes helper: left out), set on the floor */
