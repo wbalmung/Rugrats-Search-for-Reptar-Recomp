@@ -961,8 +961,9 @@ the object draw hooks, because the timer pass that normally drives this part doe
 powered), but the fan is never drawn or ticked after the cut, so nothing changes on screen.
 
 Final Level Behavior (Enhancements page, ini `[game] final_level`: 1 Enhanced = default, 0 Default = original;
-`RUGRATS_FINALLEVEL`). Enhanced = three parts, all on or all off: (1) stay in the level after the last piece, (2) a
-"Final level unlocked!" screen, (3) the hub TV as the final-level entrance. Default = the original game.
+`RUGRATS_FINALLEVEL`). Enhanced = four parts, all on or all off: (1) stay in the level after the last piece, (2) a
+"Final level unlocked!" screen, (3) the hub TV as the final-level entrance, (4) progress kept after the credits.
+Default = the original game.
 
 (1) Back to level: taking the Reptar bar that earns the 12th puzzle piece runs the "You earned a puzzle piece"
 screen, the puzzle (`80092c68`) and the "You did it!" screen inside that frame of the level. Then the game sends
@@ -983,6 +984,14 @@ its own hint. Its label only shows while no other entrance label does (the Egg H
 db 7 at obj+108 and the label callback `80049eec`, and starts / stops its label timer by distance (2500, same room); the
 label hook points the level-7 difficulty case at the red "Hard" case and shows "Final" in that string's slot, for the
 TV's calls only. Debug: `RUGRATS_TVFORCE=1` (unlocked without the pieces), `RUGRATS_ENTLOG=1`.
+
+(4) Keep progress after the credits: the final level's ending sets the credits byte `0x800C3E80` and leaves the level
+loop with next db -1. For db -1 the main loop wipes the progress block inline (`80018264..800182ac`: flags incl. 0x200
+"game beaten", puzzle pieces earned / placed, Reptar bars taken / spent), plays the credits, and goes through the title
+front end `80030158(-1)` (which, without a memory-card load, also runs the new-game reset `80094cfc` -> `80091a44`).
+Enhanced copies the block (+0x34..+0x147 and the 0x200 flag) at the level exit (hook `8006ee14`, only when the credits
+byte is set), puts it back right after the wipe (hook `8008a7ec` from ra `800182b8`) and skips the title's new-game reset
+once. Quitting to the title and a later New Game still reset as before.
 
 (2) Final level unlocked: the "You did it!" screen is followed by a second
 screen, "Final level unlocked!" (yellow) / "Go see what's on TV!" (pink); X returns to the level. How: hook on the

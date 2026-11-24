@@ -1373,8 +1373,8 @@ static MenuItem menu_items[] = {
       "Fixed: the power is out, so the kitchen ceiling fan stands still and various objects that kept their daytime "
       "colours get night colours; hedges shed leaves instead of stray markers. Original: as on the disc.", T_ENH },
     { "Final Level Behavior", MI_CHOICE, &opt.final_level, v_bool, 2, finallevel_names, NULL, NULL, "game", "final_level", NULL,
-      "Enhanced: after the last puzzle piece you stay in the level; the TV in the house (Triangle) starts Reptar 2010. "
-      "Default: straight on to the final level.", T_ENH },
+      "Enhanced: after the last puzzle piece you stay in the level; the TV in the house (Triangle) starts Reptar 2010; "
+      "after the credits you keep your pieces and bars. Default: straight on to the final level.", T_ENH },
     { "Level Select...", MI_ACTION, NULL, NULL, 0, NULL, NULL, NULL, NULL, NULL, ac_levels,  /* last on its page */
       "Jump to any level (during gameplay). The current level is left as if through a door.", T_ENH },
     { "Right-stick camera", MI_CHOICE, &opt.rcam, v_rcam, 3, rcam_names, NULL, NULL, "input", "rstick_camera", NULL,

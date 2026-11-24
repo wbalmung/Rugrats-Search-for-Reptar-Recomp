@@ -1053,6 +1053,7 @@ uint32_t hooks_level_vbl;        /* vblank when it started */
 static int level_want = -2;
 static uint32_t level_exit_at;   /* vblank at which to request the level change (0 = none) */
 int rt_hook_80018c38(void) {
+    { extern void hooks_keep_progress_level(void); hooks_keep_progress_level(); } /* post-credits title is over */
     hooks_level = (int)mem_r32(0x800C5678u);
     hooks_level_vbl = hooks_frame();
     rt_logf("level: run db %d (mode %u) at vblank %u\n", hooks_level, cpu.r[4], hooks_level_vbl);
@@ -1078,8 +1079,12 @@ void hooks_level_vblank(void) {
     rt_logf("level: leaving db %d for db %d\n", hooks_level, level_want);
     mem_w32(0x800C4918u, (uint32_t)level_want);
 }
+void hooks_keep_progress_snap(void);
 int rt_hook_8006ee14(void) {
-    if (cpu.r[31] == 0x80018210u) rt_logf("level: loop returned, next db %d at vblank %u\n", (int)cpu.r[20], hooks_frame());
+    if (cpu.r[31] == 0x80018210u) {
+        rt_logf("level: loop returned, next db %d at vblank %u\n", (int)cpu.r[20], hooks_frame());
+        if ((int32_t)cpu.r[20] == -1) hooks_keep_progress_snap();
+    }
     return 0;
 }
 
@@ -4858,6 +4863,52 @@ int rt_hook_80091d50(void) {
             mem_r16(0x800C56BCu));
     return 1;
 }
+
+/* ---- Keep progress after the credits (part of opt.final_level, 2026-11-23, user) ----------------------------------
+   The final level's ending (level script command 80077838) sets the credits byte 0x800C3E80 and ends the level loop
+   with next db -1. The main loop (80018208) then, for next db -1, wipes the whole progress block inline
+   (80018264..800182ac: +0x22/+0x23 bytes, flags +0x30 (0x200 = game beaten), +0x34 / +0x38 / +0x3c, +0x40 word,
+   pieces earned / placed +0x44 / +0x46 (0x800C56BC / BE), bars taken +0x48 (0x800C56C0) and spent +0xC8 (0x800C5740),
+   32 dbs each), plays the credits (8008b1e4 -> movie 6) at 8001854c, then runs the title front end 80030158(-1). When
+   that starts a game without a memory-card load (0x800E3CA0 == 0) it also calls 80094cfc -> 80091a44 (new-game reset
+   of +0x40..+0x147). The player lands in the hub with no pieces and no bars.
+   Enhanced: at the level exit (hook 8006ee14, ra 80018210, next db -1 with the credits byte set) +0x34..+0x147 and the
+   0x200 flag are copied; right after the inline wipe (8008a7ec called from ra 800182b8) they are put back; the
+   80094cfc reset that may follow on the title is skipped once (cleared when any level starts). Only the ending path:
+   quitting to the title (no credits byte) and a later New Game still reset. */
+#define KP_BASE 0x800C5678u
+#define KP_FROM 0x34u
+#define KP_TO   0x148u
+static uint8_t kp_buf[KP_TO - KP_FROM];
+static uint32_t kp_flags;
+static int kp_have, kp_title;
+void hooks_keep_progress_snap(void) {
+    kp_have = kp_title = 0;
+    if (!mem_r8(0x800C3E80u)) return;                          /* not the ending (quit to title etc.) */
+    if (!opt.final_level) { rt_logf("progress: ending, reset as original (Final Level Behavior = Default)\n"); return; }
+    for (uint32_t i = 0; i < sizeof kp_buf; i++) kp_buf[i] = mem_r8(KP_BASE + KP_FROM + i);
+    kp_flags = mem_r32(KP_BASE + 0x30u) & 0x200u;
+    kp_have = 1;
+    rt_logf("progress: ending, keeping pieces %d / bars %d (Final Level Behavior = Enhanced)\n", hooks_dbg_pieces(),
+            hooks_dbg_bars());
+}
+int rt_hook_8008a7ec(void) {
+    if (!kp_have || cpu.r[31] != 0x800182b8u) return 0;
+    kp_have = 0;
+    for (uint32_t i = 0; i < sizeof kp_buf; i++) mem_w8(KP_BASE + KP_FROM + i, kp_buf[i]);
+    mem_w32(KP_BASE + 0x30u, mem_r32(KP_BASE + 0x30u) | kp_flags);
+    kp_title = 1;
+    rt_logf("progress: restored after the ending's reset (pieces %d, bars %d)\n", hooks_dbg_pieces(), hooks_dbg_bars());
+    return 0;                                                   /* the original still runs */
+}
+int rt_hook_80094cfc(void) {                                    /* title new-game reset right after the ending */
+    if (!kp_title) return 0;
+    kp_title = 0;
+    rt_logf("progress: title new-game reset skipped after the credits (pieces %d, bars %d)\n", hooks_dbg_pieces(),
+            hooks_dbg_bars());
+    return 1;
+}
+void hooks_keep_progress_level(void) { kp_title = 0; }
 
 /* ---- Hedge leaves in Let There Be Light (part of opt.light_fixes, 2026-11-23, user) ------------------------------
    Walking into a backyard hedge spawns leaf particles: 80050b5c looks up model 0x3f0 (80044b74, ra 80050b80) and spawns
