@@ -150,8 +150,11 @@ static void pkt_ring_place(void) {
     const uint32_t kb = pkt_ring_kb();
     if (!kb && mem_r32(0x800DE3B4u) == PKT_EXT_BASE) {   /* RUGRATS_BIGRING=0 on a state made with the big ring: back
                                                              to the game's own ring (emuref exports need lists < 2 MB) */
-        mem_w32(0x800DE3B0u, 0x80193E50u); mem_w32(0x800DE3B4u, 0x80193E50u); mem_w32(0x800DE3B8u, 0x801D8410u);
-        rt_logf("pkt ring moved back to the game's own 80193e50..801d8410\n");
+        /* the level's own ring as 80021e40 sets it up: start gp+0xbc, size gp+0xc0 (per level: Reptar 2010 80193e50 +
+           280 KB; other levels differ, a fixed address broke db 12 states, 2026-11-23) */
+        const uint32_t lo = mem_r32(0x800C3E80u + 0xbcu), hi = lo + mem_r32(0x800C3E80u + 0xc0u);
+        mem_w32(0x800DE3B0u, lo); mem_w32(0x800DE3B4u, lo); mem_w32(0x800DE3B8u, hi);
+        rt_logf("pkt ring moved back to the game's own %08x..%08x\n", lo, hi);
         return;
     }
     if (!kb || mem_r32(0x800DE3B4u) == PKT_EXT_BASE) return;

@@ -77,7 +77,15 @@ GTE screen x offset every run vsync, to look past the 4:3 screen edge (the game 
 
 **2026-11-23:** states made with the big packet ring (0x80200000+, outside the PS1's 2 MB) freeze Redux after the
 injection (the OT links into memory it doesn't have). Load the state with `RUGRATS_BIGRING=0` (moves the ring back to
-the game's own 80193e50..801d8410; two "DMA2 list loop" lines on that frame are expected), save a new slot a few
+the level's own ring, start gp+0xbc / size gp+0xc0 as `80021e40` sets it up: Reptar 2010 80193e50..801d8410, Let There
+Be Light 801d4684..801ee0ac, hub 801d8ff8..801f7840; a fixed address broke non-Reptar states until 2026-11-23; two or
+three "DMA2 list loop" lines on that frame are expected), save a new slot a few
 seconds later, and export that slot (again with `RUGRATS_BIGRING=0`). `INJECT_DUMPFROM=<k> INJECT_DUMPN=<n>` dump RAM
 at game frames k .. k+n-1 after the injection (default 1, 12; `INJECT_DUMPN=0` = none). Redux's CD drive is idle after
 the injection (our CD state is not injected), so the music stream and the CD status byte 0x800C2F84 differ from ours.
+
+**Timing gotcha (2026-11-23):** after a test state load the script clock (t60, `RUGRATS_INPUT` times) jumps to the
+state's clock, but the frame counter used by `RUGRATS_SHOTFROM` / `RUGRATS_TEST` shot names keeps counting from boot
+(one per present: a load at t60 1300 lands at frame 650 at 30 fps, 1300 at 60, 2600 at 120). Shots meant for "right
+after the load" must use frames from there, not the state's t60. Redux run vsync N then matches port frame
+(load frame + N * fps / 60).
