@@ -1599,7 +1599,7 @@ static const struct { int db; const char *name; } lvl_list[] = {
     { 5, "Visitors from Outer Space" }, { 6, "Toy Palace" }, { 7, "Reptar 2010" }, { 9, "The Mysterious Mr. Friend" },
     { 10, "Chuckie's Glasses" }, { 11, "Circus Angelicus" }, { 12, "Let There Be Light" }, { 13, "Cookie Race" },
     { 14, "The Return of Mr. Friend" }, { 15, "Mirrorland" }, { 16, "Training Level" }, { 17, "Gold Rush" },
-    { 18, "Egg Hunt" }, { 20, "No More Cookies" }, { 21, "Touchdown Tommy" }, { 23, "Golf: hole 1" },
+    { 18, "Egg Hunt" }, { 19, "Be Bad (cut level)" }, { 20, "No More Cookies" }, { 21, "Touchdown Tommy" }, { 23, "Golf: hole 1" },
     { 24, "Golf: hole 2" }, { 25, "Golf: hole 3" }, { 26, "Golf: hole 4" }, { 27, "Golf: hole 5" },
     { 28, "Golf: hole 6" }, { 29, "Golf: hole 7" }, { 30, "Golf: hole 8" }, { 31, "Golf: hole 9" },
 };

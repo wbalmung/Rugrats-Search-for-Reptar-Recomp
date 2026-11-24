@@ -1076,9 +1076,58 @@ void hooks_level_request(int db) {
     level_exit_at = hooks_frame() + 1;
     rt_logf("level: level select asks for db %d (now db %d)\n", db, hooks_level);
 }
+/* ---- Be Bad (db 19), the cut level (2026-11-24, user) -----------------------------------------------------------
+   Its data is on the disc in DATA/DB19 but every db 19 slot in the file table (0x800B2C40, id*8: {LBA, size}) is zero,
+   so the loader allocated junk sizes and failed. Before a level change to db 19 we fill the slots: its own LEVEL19.BIN
+   / .COL, DB19A.RAW, TEXPOS.DAT, DB19LP.BIN; the model set it never had (MOD/ANM/FRM/ROT/HIE) and the voice bank come
+   from the Training Level (db 16). Its own DB19ANM is an empty stub (all 1024 slots 0xFFFF). Each level's ANM only
+   defines the slots its own moves need; Tommy's animation id -> ANM slots goes through static exe tables (player
+   obj+0xEC -> 0x800B9CB4 row, obj+0xE8 -> 0x800BA824, 4 tracks), and an undefined slot gives frame -1, a garbage
+   duration and an endless loop in the animation player 80056834 (8005698c). Be Bad's stairs play anim 46 = slots
+   96-99, defined only by db 3 and db 16 (houses 1/12/13/15/18 and db 14 lack them: stepping on either staircase froze,
+   user 2026-11-24). db 16 covers 171 of Tommy's 187 slots (not anims 34-37) and still fits next to the 348 KB map
+   (Mirrorland's set ran MemAlloc out of 206024 bytes). Debug: RUGRATS_BEBADMOD / RUGRATS_BEBADANIM=<db> pick the model+
+   voice / animation donor. The per-db jump
+   table 0x80012820 (code 80017c70) gives db 8, 19 and 22 the multiplayer camera mode (0x800C3FB0 = 1 -> the player's
+   camera is the never-filled 2nd camera 0x800DE550, nothing is drawn); db 19's entry is pointed at the single-player
+   case 80017cb0. Written only when db 19 is requested, so other levels never see a change. LBAs are the USA disc's. */
+static void bebad_restore(void) {
+    static const uint32_t slot[][3] = {   /* file id, LBA, size */
+        { 453, 123616, 348584 },  /* LEVEL19.BIN */   { 485, 123787, 46364 },   /* LEVEL19.COL */
+        { 518, 123455, 294912 },  /* DB19A.RAW */     { 572, 123812, 5136 },    /* TEXPOS.DAT */
+        { 421, 123602, 27748 },   /* DB19LP.BIN */
+    };
+    static const uint16_t base[] = { 242, 585, 617, 274, 306, 338, 370 };  /* MOD SPEECHTB ISF | ANM FRM ROT HIE bases */
+    int anim_db = 16, mod_db = 16;
+    { const char *e = getenv("RUGRATS_BEBADANIM"); if (e) anim_db = atoi(e); }   /* debug: animation-set donor */
+    { const char *e = getenv("RUGRATS_BEBADMOD"); if (e) mod_db = atoi(e); }     /* debug: model / voice donor */
+    for (unsigned i = 0; i < sizeof slot / sizeof slot[0]; i++) {
+        mem_w32(0x800B2C40u + slot[i][0] * 8, slot[i][1]);
+        mem_w32(0x800B2C40u + slot[i][0] * 8 + 4, slot[i][2]);
+    }
+    for (unsigned i = 0; i < sizeof base / sizeof base[0]; i++) {
+        uint32_t from = i < 3 ? (uint32_t)mod_db : (uint32_t)anim_db;
+        uint32_t src = 0x800B2C40u + (base[i] + from) * 8, dst = 0x800B2C40u + (base[i] + 19u) * 8;
+        mem_w32(dst, mem_r32(src));
+        mem_w32(dst + 4, mem_r32(src + 4));
+    }
+    {   /* debug: RUGRATS_BEBADTEX=<db> = that level's texture file (A.RAW) instead of DB19A.RAW */
+        const char *e = getenv("RUGRATS_BEBADTEX");
+        if (e) {
+            uint32_t src = 0x800B2C40u + (499u + (uint32_t)atoi(e)) * 8, dst = 0x800B2C40u + 518u * 8;
+            mem_w32(dst, mem_r32(src));
+            mem_w32(dst + 4, mem_r32(src + 4));
+        }
+    }
+    mem_w32(0x80012820u + 19 * 4, 0x80017CB0u);
+    rt_logf("level: Be Bad (db 19) restored: file slots filled, models db %d, animations db %d, single-player camera\n",
+            mod_db, anim_db);
+}
+
 void hooks_level_vblank(void) {
     if (!level_exit_at || hooks_frame() < level_exit_at) return;
     level_exit_at = 0;
+    if (level_want == 19) bebad_restore();
     rt_logf("level: leaving db %d for db %d\n", hooks_level, level_want);
     mem_w32(0x800C4918u, (uint32_t)level_want);
 }

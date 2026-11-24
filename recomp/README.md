@@ -710,8 +710,11 @@ these 4 are skipped (`--levels all` runs them anyway), because the released game
 - 8 Ice Cream Mountain: LEVEL08.BIN stores its tables with 32-bit coordinates; every other level and the
   engine's loader (`8002a208`) use 16-bit. Parsed the release way, its room table pointer lands past the end of
   RAM (`0x80896c48`), so the level loop runs but draws nothing (black). Leftover data from an older format.
-- 19 Be Bad: its level file (file id 453, table `0x800B2C40`, 8 bytes per id: sector, size) has no entry: not on
-  the disc. The loader reads stack junk as the size and MemAlloc fails. A cut level.
+- 19 Be Bad: a cut level. Its file-table slots (table `0x800B2C40`, 8 bytes per id: sector, size) are zeroed, e.g.
+  id 453 = LEVEL19.BIN, so the loader reads stack junk as the size and MemAlloc fails. Most of its data IS on the
+  disc, orphaned, in `DATA/DB19/` (LEVEL19.BIN/.COL, DB19A.RAW, DB19ANM, DB19LP, TEXPOS; no MOD/FRM/ROT/HIE, SFX or
+  voice). With the slots filled and models borrowed from another level it loads and renders (see HANDOFF Session
+  log 2026-11-24 "Be Bad").
 - 22 Multiplayer Golf: from the hub it asks for file id 328, also not on the disc; the real game starts it from the
   main menu after player setup. The 9 holes (23-31) are benchmarked as single levels.
 Toy Palace (6) has a short black stretch (~4 of 37 sampled frames) when the scripted walk triggers something; it
@@ -878,8 +881,11 @@ Ball rolling (`8005fcb8`, stroke counted at launch): 1 swing in 3, 0.3 s later, 
 82, Chuckie 347, Angelica 598, Phil 820 868, Lil 949 995; unheard first, never the same twice in a row) if nothing
 else is playing. Off: original.
 
-Level Select (Enhancements page, "Level Select..." row): a list of the 28 playable levels (game database numbers;
-not 0 menus, 8 Ice Cream Mountain, 19 Be Bad, 22 Multiplayer Golf, see "Per-level performance test"). Going there
+Level Select (Enhancements page, "Level Select..." row): a list of the 28 playable levels plus the cut level "Be Bad"
+(game database numbers; not 0 menus, 8 Ice Cream Mountain, 22 Multiplayer Golf, see "Per-level performance test").
+Be Bad (db 19) is restored on the way there (`bebad_restore` in hooks.c: file slots, models and animations from the
+Training Level, db 16, which has Tommy's stair animations; single-player camera; unfinished greybox level, see HANDOFF
+Session log 2026-11-24). Going there
 (Enter / A / Cross / click) closes the menu and, at the next vblank, sets the level loop's exit variable `0x800C4918`
 to the level (`hooks_level_request`, same path as `RUGRATS_LEVEL` and the game's doors): the current level ends without
 saving and the chosen one loads with its normal title card / intro. Only during gameplay (`hooks_gameplay()`: level
