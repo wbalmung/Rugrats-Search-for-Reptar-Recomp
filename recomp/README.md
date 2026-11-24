@@ -834,8 +834,10 @@ each new gap x2 / x4, Off keeps the timer from running out. Cutscene and event l
 
 Restored Lines (Enhancements page, ini `[audio] voice_restore`, default 1 = On; `RUGRATS_RESTORE`): voice lines that
 are on the disc but that the game never requests. Each level's `DATA/DBxx/SPEECHTB.DAT` maps line ids to clips in
-`DATA/SOUND/XA/DBxx.ISF` (every clip on the disc has an entry). 160 ids (177 entries, ~7.6 min) are requested by no
-call site, no id list in the EXE and no level trigger or hint object (`restore_ids[]` in hooks.c). Hook on the voice
+`DATA/SOUND/XA/DBxx.ISF` (every clip on the disc has an entry). 116 ids (133 entries, ~5.7 min) are requested by no
+call site, no id list in the EXE and no level trigger or hint object (`restore_ids[]` in hooks.c). Lines the game
+does request somewhere (golf hole ends and ball lines, Reptar 2010's chatter ranges, a few player / object lines) are
+not in it, so they only play at their own moment. Hook on the voice
 player `8008da4c`: only while the chatter function runs, half of its picks become a restored line that the current
 level's table holds and that has not played yet this visit (played bit 0 of `gp+0x778[index]`). Once all of them
 have played they repeat: the hook clears the pick's played bit (the game refuses a line whose flags are exactly 1),
@@ -870,14 +872,17 @@ moment (Golf Reactions below). Debug: `RUGRATS_VOXLOG=1` logs every voice reques
 Golf Reactions (Enhancements page, ini `[audio] voice_golf`, default 1 = On; `RUGRATS_GOLFVOX`). When the ball drops
 (`8007a9d8`, holes db 23..31) the game asks for one reaction line and in the same frame starts the next hole (its
 scorecard music takes the CD drive) or the "You were over par" screen (pauses the CD), so in the original these lines
-are never heard; only hole 9's announcer at or under par plays. The hook picks the line (golf character = player
+are never heard; only hole 9's announcer at or under par starts (and is cut off). The hook picks the line (golf character = player
 `+0x15c`: 1 Tommy, 2 Chuckie, 3 Angelica, 4 Lil, 5 Phil; strokes vs par): hole in one Tommy 70, Angelica 586, Phil
 812; birdie Tommy 73 (restored), Chuckie 338, Angelica 589, Phil 811, Lil 939; other results at or under par the
 game's own list for that baby (none for Tommy); bogey Chuckie 336, Angelica 587, Phil 809; double bogey Tommy 72,
 Chuckie 337, Angelica 588, Phil 810, Lil 938; worse: the game's fail list for that baby plus the restored announcer
 lines 1211 1212 1218 (and Angelica's 524 593). It starts that line (after one still playing, if any) and runs the
 hole finish only when it has ended plus 0.2 s (10 s safety), with the original's own voice requests muted and the
-pad ignored meanwhile. No line for the result: the game goes on at once. Hole 9 at or under par is left alone.
+pad ignored meanwhile. No line for the result: the game goes on at once. Hole 9 at or under par: the game's
+announcer (1202 1205 1210), picking one that has not played yet (1205 and 1210 are also Tommy's hole 9 chatter and
+each plays once per visit, so the game's own pick was often silent), after any line still playing; the course-end
+cinematic waits for it (in the original it cut the line off after ~0.85 s).
 Ball rolling (`8005fcb8`, stroke counted at launch): 1 swing in 3, 0.3 s later, the baby's rolling line (Tommy 270
 82, Chuckie 347, Angelica 598, Phil 820 868, Lil 949 995; unheard first, never the same twice in a row) if nothing
 else is playing. Off: original.

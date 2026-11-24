@@ -3272,7 +3272,7 @@ static int golf_frame(int32_t dt);   /* Golf Reactions (below) */
 static void circus_frame(int32_t dt); /* Circus target line (below) */
 static int golf_mute;                /* 1 while the held hole finish runs: its own voice requests are skipped */
 /* Timed chatter (part of Restored Lines, user 2026-11-17) for levels with no chatter function (0x800B9618[db] = 0)
-   whose restored lines would stay unheard: hub (db 1: 29 159 193 196 200 225, Tommy), Egg Hunt (db 18: 686 687
+   whose restored lines would stay unheard: hub (db 1: 29 196 200 225, Tommy; 159 193 are the game's own, 800601e4), Egg Hunt (db 18: 686 687
    688); none of them used by those levels' triggers / hint objects (RAM scan of in-level states, 2026-11-17).
    Not The Return of Mr. Friend (db 14): it runs with the HUB's voice bank loaded (gp+0x77c ISF and the 34-line
    table = db 1's), its own bank with 1135 never loads; 1135 is also in The Mysterious Mr. Friend's bank (db 9,
@@ -3343,9 +3343,13 @@ int rt_hook_800818e0(void) {
     return 1;
 }
 
-/* Restored Lines (opt.voice_restore). Each level's SPEECHTB.DAT lists its voice clips by id; 160 ids (177 entries,
-   ~7.6 min) are never requested by the game: not by any call site, id list in the EXE (0x800B9220.., 0x800B96C8..),
-   level trigger or hint object (survey 2026-11-17, HANDOFF). Every clip on the disc has an entry, so these are all
+/* Restored Lines (opt.voice_restore). Each level's SPEECHTB.DAT lists its voice clips by id; 116 ids (133 entries,
+   ~5.7 min) are never requested by the game: not by any call site, id list in the EXE (0x800B9220.., 0x800B96C8..),
+   level trigger or hint object (survey 2026-11-17, HANDOFF). 2026-11-24: 44 ids taken out that the game does request
+   (the survey missed computed ids and literals far from the call): golf hole ends / ball lines 70 270 336-338 347
+   586-589 598 809-812 820 868 939 949 995 (8007a9d8, golf chatter; audible through Golf Reactions); Reptar 2010's
+   chatter 80080cd8 1123-1132 (1123 + rand%10), 1181 (once), 1182 1184 1186-1194 (1182 + rand%13, 1183/1185 -> +1);
+   Tommy's player action 800601e4 159 193 (with 234 235); Gold Rush 8007f5a8 859 986; object 80084314 143 (or 21). Every clip on the disc has an entry, so these are all
    of them. When the level's chatter function (800818e0 above) asks 8008da4c for a random line, this swaps the id,
    half the time, for one of those that the CURRENT level's table holds and that has not played yet (byte at
    gp+0x778 + index, bit 0 = played: ids < 2040 get it when they play. The game itself only blocks a line whose
@@ -3354,14 +3358,12 @@ int rt_hook_800818e0(void) {
    Dialogue volume). Levels without a chatter function (hub, Cookie Race, Return of Mr. Friend,
    Egg Hunt: 13 entries) never call it, so their lines stay unheard. Own RNG: the game's rand sequence is untouched. */
 static const uint16_t restore_ids[] = {
-    29, 33, 34, 35, 36, 37, 70, 73, 82, 94, 95, 97, 103, 123, 136, 137, 141, 142, 143, 147, 148, 159, 193, 196,
-    200, 215, 220, 221, 224, 225, 230, 231, 233, 268, 270, 275, 279, 280, 288, 296, 297, 298, 299, 300, 303, 308,
-    310, 315, 336, 337, 338, 347, 360, 397, 398, 404, 407, 470, 517, 524, 528, 537, 552, 553, 581, 586, 587, 588,
-    589, 593, 598, 617, 618, 624, 625, 626, 627, 628, 634, 635, 636, 642, 647, 648, 653, 656, 658, 666, 667, 670,
-    671, 685, 686, 687, 688, 692, 693, 728, 762, 769, 770, 771, 772, 773, 774, 775, 809, 810, 811, 812, 820, 859,
-    868, 897, 898, 899, 900, 901, 904, 920, 930, 939, 949, 980, 981, 983, 984, 986, 995, 1052, 1073, 1080, 1083,
-    1084, 1118, 1123, 1124, 1125, 1126, 1128, 1129, 1130, 1131, 1132, 1133, 1135, 1181, 1182, 1185, 1186, 1187,
-    1188, 1189, 1190, 1191, 1193, 1194, 1211, 1212, 1218,
+    29, 33, 34, 35, 36, 37, 73, 82, 94, 95, 97, 103, 123, 136, 137, 141, 142, 147, 148, 196, 200, 215, 220, 221,
+    224, 225, 230, 231, 233, 268, 275, 279, 280, 288, 296, 297, 298, 299, 300, 303, 308, 310, 315, 360, 397, 398,
+    404, 407, 470, 517, 524, 528, 537, 552, 553, 581, 593, 617, 618, 624, 625, 626, 627, 628, 634, 635, 636, 642,
+    647, 648, 653, 656, 658, 666, 667, 670, 671, 685, 686, 687, 688, 692, 693, 728, 762, 769, 770, 771, 772, 773,
+    774, 775, 897, 898, 899, 900, 901, 904, 920, 930, 980, 981, 983, 984, 1052, 1073, 1080, 1083, 1084, 1118, 1133,
+    1135, 1185, 1211, 1212, 1218,
 };
 static int restore_listed(unsigned id) {
     int lo = 0, hi = (int)(sizeof restore_ids / sizeof restore_ids[0]) - 1;
@@ -3481,8 +3483,10 @@ int rt_hook_8008da4c(void) {
    Hole finish 8007a9d8(player) (ball in cup, 800580a8) asks the voice player for ONE line and in the same frame
    queues the next hole (holes 1-8: the scorecard music's Setloc takes the drive before a voice sector is read) or
    the "You were over par" screen (8008dbec pauses the CD), so in the shipped game these lines are never heard.
-   Only hole 9 at / under par (announcer + course end) is audible. Here: pick the line the game would (plus the
-   restored ones, per character, sorted by ear by the user), start it, and run 8007a9d8 only when it has finished
+   Only hole 9 at / under par (announcer + course end) was audible, and only ~0.85 s of it (the course-end
+   cinematic stops the voice) when it was not refused (played once already, or a line still playing). Here: pick
+   the line the game would (plus the restored ones, per character, sorted by ear by the user; hole 9 at par: an
+   announcer line not played yet, golf_announcer), start it, and run 8007a9d8 only when it has finished
    (its own voice requests muted; pad ignored meanwhile). No line for this result -> 8007a9d8 runs at once.
    Ball rolling: the game's chatter plays these only if its timer runs out during the 0.67 s swing (state 15);
    here 1 swing in 3 gets one 0.3 s after launch (unheard first, never the same twice in a row). */
@@ -3516,10 +3520,28 @@ static int golf_idx(void) {
 }
 enum { GT = 1, GC = 2, GA = 3, GL = 4, GP = 5 };
 #define GPICK(a) ((a)[golf_rand() % (sizeof(a) / sizeof((a)[0]))])
+static int golf_table_index(unsigned id);
+/* hole 9 at / under par: the game's announcer, rand%3 of [1202 1205 1210] (8007a9d8). 1205 and 1210 are also in
+   Tommy's hole 9 chatter (0x800B950C), and each id plays once per table load (gp+0x778 bit 0), so the game's own
+   pick was often refused in silence. Here: one that has not played yet (any of them if all have; golf_say clears
+   the bit), and the course end waits for it (in the original the cinematic stopped it after ~0.85 s). */
+static unsigned golf_announcer(void) {
+    static const uint16_t an[] = { 1202, 1205, 1210 };
+    const uint32_t played = mem_r32(cpu.r[28] + 0x778);
+    unsigned cand[3]; int nc = 0;
+    for (int pass = 0; pass < 2 && !nc; pass++)
+        for (int k = 0; k < 3; k++) {
+            const int i = golf_table_index(an[k]);
+            if (i < 0) continue;
+            if (pass == 0 && played && (mem_r8(played + (uint32_t)i) & 1u)) continue;
+            cand[nc++] = an[k];
+        }
+    return nc ? cand[golf_rand() % (uint32_t)nc] : 0;
+}
 /* the line for this hole result, or 0 = none (then the game runs as usual) */
 static unsigned golf_pick(int who, int s, int p, int idx) {
     if (s <= p) {
-        if (idx >= 8) return 0;                  /* hole 9: the game's announcer line, already heard */
+        if (idx >= 8) return golf_announcer();   /* hole 9: announcer, then the course end */
         if (s == 1) {                            /* hole in one */
             if (who == GT) return 70;
             if (who == GA) return 586;
