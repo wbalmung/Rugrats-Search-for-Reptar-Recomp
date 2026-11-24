@@ -1000,6 +1000,57 @@ void host_rstick(float *x, float *y) {
     *y = fy;
 }
 
+/* left stick as analog (Debug Freecam movement; the game itself only sees it as the d-pad): XInput or DualSense /
+   DS4, whichever is pushed further; same radial dead zone as host_rstick. No keys (those come as d-pad buttons).
+   Test: RUGRATS_LSTICK=<from t60>:<to t60>:<x>:<y>[,...] (as RUGRATS_RSTICK). */
+void host_lstick(float *x, float *y) {
+    float fx = 0, fy = 0;
+    *x = *y = 0;
+    if (pad_block) return;
+    if (test_frames) {
+        static int n = -1, from[16], to[16];
+        static float sx[16], sy[16];
+        if (n < 0) {
+            n = 0;
+            const char *e = getenv("RUGRATS_LSTICK");
+            while (e && *e && n < 16) {
+                int used = 0;
+                if (sscanf(e, "%d:%d:%f:%f%n", &from[n], &to[n], &sx[n], &sy[n], &used) < 4 || !used) break;
+                n++;
+                e += used;
+                if (*e == ',') e++;
+            }
+        }
+        for (int i = 0; i < n; i++)
+            if (test_t60 >= from[i] && test_t60 < to[i]) { fx += sx[i]; fy += sy[i]; }
+    }
+    float px = 0, py = 0;
+    if (xget) {
+        XINPUT_STATE st;
+        if (xget(0, &st) == ERROR_SUCCESS) { px = st.Gamepad.sThumbLX / 32767.0f; py = st.Gamepad.sThumbLY / 32767.0f; }
+    }
+    {
+        int dx, dy;
+        ds_lstick(&dx, &dy);
+        float qx = dx / 127.0f, qy = -dy / 127.0f;
+        if (qx * qx + qy * qy > px * px + py * py) { px = qx; py = qy; }
+    }
+    float m = sqrtf(px * px + py * py);
+    const float dz = 0.2f;
+    if (m > dz) {
+        float k = (m > 1 ? 1 : m);
+        k = (k - dz) / (1 - dz) / m;
+        fx += px * k;
+        fy += py * k;
+    }
+    if (fx > 1) fx = 1;
+    if (fx < -1) fx = -1;
+    if (fy > 1) fy = 1;
+    if (fy < -1) fy = -1;
+    *x = fx;
+    *y = fy;
+}
+
 /* ---- presentation -------------------------------------------------------
    VSync on: if the display refresh equals the frame rate (59/60 Hz counts as 60), Present(1) paces
    the game; otherwise frames are timed by the clock and shown without tearing. (Present(2+) does not

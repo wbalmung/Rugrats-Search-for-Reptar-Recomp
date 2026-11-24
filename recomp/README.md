@@ -800,7 +800,9 @@ always chosen (logs `puzzle: earned pieces ...`).
 Freecam (Debug page, Off / On, not saved): detaches the camera; the player stands still because the game gets no pad
 buttons while it is engaged (`host_pad_buttons`; only while the gameplay camera ran in the last 0.5 s, so menus,
 cutscenes and the title keep their input). Up / Down fly along the view, Left / Right strafe, right stick or J L I K
-look, R1 / L1 up / down, Cross held x4 speed, Square held x1/4 (pad and key bindings apply: `host_pad_raw`). How:
+look, R1 / L1 up / down, Cross held x4 speed, Square held x1/4 (pad and key bindings apply: `host_pad_raw`). The left
+stick is analog (half-way = half speed, `host_lstick`); d-pad / keys give full speed. Speed and turning ease in and out
+(0.12 s / 0.06 s), and forward + strafe together never go faster than full speed. How:
 hooks.c "Debug Freecam" takes the gameplay LookAt call (`800211e8` from `8001e928`, same filter as the right-stick
 camera), writes our eye to cam+0x14 and builds the matrix from the exact direction; `8002953c` puts the game's eye back
 each frame, so turning it off returns to the normal camera at once. Starts from the current view, and again after a
@@ -809,7 +811,8 @@ which room holds the eye and, for none, pulls cam+0x14 back into the last room's
 answers with the last room instead, hook `rt_hook_8002b660`), so it flies through walls, floors and ceilings and is
 drawn exactly where it is. Rooms render from the room the eye is in, or the last one it was in; inside walls you see
 the void.
-`RUGRATS_FREECAM=1` (on from the start, tests), `RUGRATS_FCLOG=1` (eye per game frame).
+`RUGRATS_FREECAM=1` (on from the start, tests), `RUGRATS_FCLOG=1` (eye per game frame), `RUGRATS_LSTICK=<from>:<to>:<x>:<y>,...`
+(test left stick, t60 clock, as `RUGRATS_RSTICK`), `RUGRATS_FCPOS=x,y,z,yaw,pitch` (start pose, degrees).
 Test helper: `RUGRATS_MENU_KEYS=<keys>` with `RUGRATS_MENU=<frame>` (+ `RUGRATS_MENU_TAB=<page>`): one key per menu
 step, U D L R = arrows, 0 = shot (`shots/menuN.bmp`), then the menu closes. Logs `debug: pieces ...` / `debug: bars ...`.
 

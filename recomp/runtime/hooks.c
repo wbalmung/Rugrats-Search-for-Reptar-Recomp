@@ -1493,12 +1493,12 @@ void f_800211e8(void);
    The matrix is built from the exact direction (as RUGRATS_RCAMEXACT). host_pad_buttons() gives the game no buttons
    while the freecam is engaged (gameplay camera seen in the last 0.5 s), so the player stands still; menus, cutscenes
    and the title keep their input. Controls (host_pad_raw, so key / pad bindings apply): Up / Down = fly along the view,
-   Left / Right = strafe, right stick (J L I K) = look, R1 / L1 = up / down, Cross held = x4, Square held = x1/4.
+   Left / Right = strafe (left stick analog via host_lstick; motion and turning eased, see fc_update), right stick (J L I K) = look, R1 / L1 = up / down, Cross held = x4, Square held = x1/4.
    No collision: see rt_hook_8002b660 (the game's eye clamp is skipped). Starts at the current camera eye and direction (again after a level change or cutscene: gameplay camera gone > 1 s). Debug: RUGRATS_FREECAM=1 turns it on from the start (tests),
    RUGRATS_FCLOG=1 logs the eye every game frame. */
 int hooks_freecam;
 static uint32_t fc_seen = 0x80000000u;  /* vblank of the last gameplay camera update */
-static double fc_eye[3], fc_yaw, fc_pitch;
+static double fc_eye[3], fc_yaw, fc_pitch, fc_vel[3], fc_turn[2];   /* vel: units/s, turn: rad/s (eased) */
 int hooks_freecam_engaged(void) { return hooks_freecam && fc_on && hooks_frame() - fc_seen < 30u; }
 static void fc_matrix(uint32_t m, const double eye[3], const double tgt[3]) {   /* rows as in 800211e8 */
     double f[3] = { tgt[0] - eye[0], tgt[1] - eye[1], tgt[2] - eye[2] };
@@ -1529,16 +1529,33 @@ static void fc_update(uint32_t cam) {
         double fx = (int16_t)mem_r16(cam + 12), fy = (int16_t)mem_r16(cam + 14), fz = (int16_t)mem_r16(cam + 16);
         fc_yaw = atan2(fz, fx);
         fc_pitch = atan2(-fy, sqrt(fx * fx + fz * fz));   /* y is down: positive pitch = looking up */
+        {   /* debug: RUGRATS_FCPOS=x,y,z,yaw,pitch (degrees) = start pose (tests: look at a spot from a set place) */
+            const char *e = getenv("RUGRATS_FCPOS");
+            double p[5];
+            if (e && sscanf(e, "%lf,%lf,%lf,%lf,%lf", &p[0], &p[1], &p[2], &p[3], &p[4]) == 5) {
+                for (int a = 0; a < 3; a++) fc_eye[a] = p[a];
+                fc_yaw = p[3] / 57.2958; fc_pitch = p[4] / 57.2958;
+            }
+        }
+        fc_vel[0] = fc_vel[1] = fc_vel[2] = fc_turn[0] = fc_turn[1] = 0;
         fc_on = 1;
         rt_logf("freecam: on at %.0f %.0f %.0f yaw %.1f pitch %.1f\n", fc_eye[0], fc_eye[1], fc_eye[2],
                 fc_yaw * 57.2958, fc_pitch * 57.2958);
     }
     const double dt = ticks / 300.0;
+    /* Smooth control (2026-11-24): stick / button input sets a target velocity (move) and turn rate (look); the
+       actual ones ease toward it (time constants FC_MOVE_TAU / FC_TURN_TAU), so starts, stops and direction
+       changes glide instead of jumping. The left stick is analog (host_lstick: half-way = half speed); without
+       it the d-pad / keys give full speed. Forward + strafe together are limited to full speed (no faster
+       diagonals). */
     float sx = 0, sy = 0;
     host_rstick(&sx, &sy);
     if (opt.rcam_invert) sy = -sy;
-    fc_yaw = wrap_pi(fc_yaw - sx * 2.5 * dt);           /* stick right = turn right (as the right-stick camera) */
-    fc_pitch += sy * 1.8 * dt;
+    const double kt = 1 - exp(-dt / 0.06), km = 1 - exp(-dt / 0.12);   /* FC_TURN_TAU, FC_MOVE_TAU (s) */
+    fc_turn[0] += (sx * 2.5 - fc_turn[0]) * kt;
+    fc_turn[1] += (sy * 1.8 - fc_turn[1]) * kt;
+    fc_yaw = wrap_pi(fc_yaw - fc_turn[0] * dt);         /* stick right = turn right (as the right-stick camera) */
+    fc_pitch += fc_turn[1] * dt;
     if (fc_pitch > 1.5) fc_pitch = 1.5;
     if (fc_pitch < -1.5) fc_pitch = -1.5;
     const uint16_t b = (uint16_t)~host_pad_raw(0);      /* active high */
@@ -1546,11 +1563,25 @@ static void fc_update(uint32_t cam) {
     if (b & 0x4000) speed *= 4;                          /* Cross */
     if (b & 0x8000) speed /= 4;                          /* Square */
     const double cp = cos(fc_pitch), f[3] = { cp * cos(fc_yaw), -sin(fc_pitch), cp * sin(fc_yaw) };
-    const double r[3] = { -sin(fc_yaw), 0, cos(fc_yaw) };   /* right of the view (y down, x/z as the game) */
-    double mv = ((b & 0x0010) ? 1 : 0) - ((b & 0x0040) ? 1 : 0), st = ((b & 0x0020) ? 1 : 0) - ((b & 0x0080) ? 1 : 0);
+    /* screen right = the view matrix's x row (fc_matrix r0 = {f.z, 0, -f.x}). Before 2026-11-24 this was the
+       opposite vector, so Right strafed left and Left strafed right. */
+    const double r[3] = { sin(fc_yaw), 0, -cos(fc_yaw) };
+    float lx = 0, ly = 0;
+    host_lstick(&lx, &ly);
+    double mv, st;
+    if (lx != 0 || ly != 0) { mv = ly; st = lx; }       /* analog left stick */
+    else {
+        mv = ((b & 0x0010) ? 1 : 0) - ((b & 0x0040) ? 1 : 0);
+        st = ((b & 0x0020) ? 1 : 0) - ((b & 0x0080) ? 1 : 0);
+    }
+    const double ml = sqrt(mv * mv + st * st);
+    if (ml > 1) { mv /= ml; st /= ml; }
     double up = ((b & 0x0800) ? 1 : 0) - ((b & 0x0400) ? 1 : 0);
-    for (int a = 0; a < 3; a++) fc_eye[a] += (f[a] * mv + r[a] * st) * speed * dt;
-    fc_eye[1] -= up * speed * dt;                        /* y down */
+    for (int a = 0; a < 3; a++) {
+        const double want = (f[a] * mv + r[a] * st) * speed - (a == 1 ? up * speed : 0);   /* y down */
+        fc_vel[a] += (want - fc_vel[a]) * km;
+        fc_eye[a] += fc_vel[a] * dt;
+    }
     if (lg) rt_logf("freecam f%u eye %.0f %.0f %.0f yaw %.1f pitch %.1f buttons %04x\n", hooks_frame(), fc_eye[0], fc_eye[1],
                     fc_eye[2], fc_yaw * 57.2958, fc_pitch * 57.2958, b);
 }

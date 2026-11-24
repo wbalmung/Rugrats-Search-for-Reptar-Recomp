@@ -19,6 +19,7 @@ typedef struct {
     int live;           /* has delivered a report */
     uint32_t buttons;
     int rx, ry;         /* right stick, 0..255 (128 = centre) */
+    int lx, ly;         /* left stick, 0..255 (freecam analog movement) */
     HANDLE h;
     char path[512];
     const char *name;
@@ -56,6 +57,8 @@ static int parse(const uint8_t *r, int n, int dualsense, int bt, uint32_t *out, 
     int lx = r[o], ly = r[o + 1];
     rs[0] = r[o + 2];
     rs[1] = r[o + 3];
+    rs[2] = lx;
+    rs[3] = ly;
     const uint8_t *b = full ? r + o + 7 : r + o + 4;
     uint32_t m = 0;
     static const uint32_t hat[8] = { DS_UP, DS_UP | DS_RIGHT, DS_RIGHT, DS_DOWN | DS_RIGHT, DS_DOWN,
@@ -98,7 +101,7 @@ static DWORD WINAPI reader(LPVOID arg) {
         DWORD got = 0;
         if (!ReadFile(p->h, buf, len, &got, NULL) || got == 0) break; /* unplugged / switched off */
         uint32_t m;
-        int rs[2];
+        int rs[4];
         if (!parse(buf, (int)got, dualsense, p->bt, &m, rs)) continue;
         if (!reports++) {
             rt_logf("pad: %s connected (%s), report 0x%02x, %lu bytes\n", p->name, p->bt ? "Bluetooth" : "USB",
@@ -110,6 +113,8 @@ static DWORD WINAPI reader(LPVOID arg) {
         p->buttons = m;
         p->rx = rs[0];
         p->ry = rs[1];
+        p->lx = rs[2];
+        p->ly = rs[3];
         p->live = 1;
         ReleaseSRWLockExclusive(&lock);
     }
@@ -209,6 +214,20 @@ void ds_rstick(int *x, int *y) {
     for (int i = 0; i < MAX_PADS; i++)
         if (pads[i].live) {
             int dx = pads[i].rx - 128, dy = pads[i].ry - 128, d = dx * dx + dy * dy;
+            if (d > best) { best = d; bx = dx; by = dy; }
+        }
+    ReleaseSRWLockShared(&lock);
+    *x = bx;
+    *y = by;
+}
+
+/* left stick of the controller pushed furthest, -128..127 each (x right, y down); 0 when none (Debug Freecam) */
+void ds_lstick(int *x, int *y) {
+    int bx = 0, by = 0, best = -1;
+    AcquireSRWLockShared(&lock);
+    for (int i = 0; i < MAX_PADS; i++)
+        if (pads[i].live) {
+            int dx = pads[i].lx - 128, dy = pads[i].ly - 128, d = dx * dx + dy * dy;
             if (d > best) { best = d; bx = dx; by = dy; }
         }
     ReleaseSRWLockShared(&lock);

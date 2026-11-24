@@ -13,4 +13,5 @@ enum {
 void ds_start(void);       /* background thread: finds controllers (hotplug) and reads them */
 uint32_t ds_buttons(void); /* DS_* bits held on any connected controller; left stick counts as d-pad */
 int ds_count(void);
+void ds_lstick(int *x, int *y); /* left stick, same ranges (Debug Freecam analog movement) */
 void ds_rstick(int *x, int *y); /* right stick of the most deflected controller, -128..127 (x right, y down) */        /* controllers currently delivering input */
