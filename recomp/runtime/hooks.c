@@ -1059,6 +1059,7 @@ int rt_hook_80018c38(void) {
     { extern void hooks_keep_progress_level(void); hooks_keep_progress_level(); } /* post-credits title is over */
     hooks_level = (int)mem_r32(0x800C5678u);
     hooks_level_vbl = hooks_frame();
+    if (hooks_level == 8) { int icm_restore(void); icm_restore(); }   /* again: a reload or quick load of db 8 */
     rt_logf("level: run db %d (mode %u) at vblank %u\n", hooks_level, cpu.r[4], hooks_level_vbl);
     if (level_want == -2) {
         const char *e = getenv("RUGRATS_LEVEL");
@@ -1128,6 +1129,7 @@ void hooks_level_vblank(void) {
     if (!level_exit_at || hooks_frame() < level_exit_at) return;
     level_exit_at = 0;
     if (level_want == 19) bebad_restore();
+    if (level_want == 8) { int icm_restore(void); icm_restore(); }   /* icecream.c: Ice Cream Mountain */
     rt_logf("level: leaving db %d for db %d\n", hooks_level, level_want);
     mem_w32(0x800C4918u, (uint32_t)level_want);
 }

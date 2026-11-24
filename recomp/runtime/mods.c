@@ -37,7 +37,7 @@
 #define MAX_INI (256 * 1024)
 #define MAX_DATA_FILE (64u << 20)       /* bytes, a replaced data file */
 #define MAX_STREAM_FILE (512u << 20)    /* bytes, a replaced movie / XA stream */
-#define LAST_LBA (99u * 60 * 75 - 150 - 1)
+#define LAST_LBA (440000u - 1)   /* icecream.c serves its files from LBA 440000 */
 
 #define FILE_TAB 0x800B2C40u
 #define FILE_TAB_N 714

@@ -1574,9 +1574,9 @@ static void confirm_key(int vk) {
 
 /* Level Select (Enhancements row): a list of the playable levels over the options panel. Going there sets the game's
    own "next level" variable (hooks_level_request), so the current level ends as if through a door and the chosen one
-   loads with its normal intro. Level numbers are the game's databases (0x800C5678); left out: 0 menus, 8 Ice Cream
-   Mountain (its level file can't be parsed), 19 Be Bad (file missing on the disc), 22 Multiplayer Golf (needs the main
-   menu's player setup); see README "Per-level performance test". */
+   loads with its normal intro. Level numbers are the game's databases (0x800C5678); left out: 0 menus and 22 Multiplayer
+   Golf (needs the main menu's player setup). The cut levels 8 Ice Cream Mountain (icecream.c: converted from the
+   disc's pre-release files) and 19 Be Bad (hooks.c bebad_restore) are in; see README "Per-level performance test". */
 int hooks_gameplay(void);
 void hooks_level_request(int db);
 static HFONT font_get(HFONT *cache, int *cache_h, int h, int weight);
@@ -1596,7 +1596,8 @@ static void ui_panel(HDC dc, int x0, int y0, int pw, int ph, int rowh, const cha
 extern int hooks_level;
 static const struct { int db; const char *name; } lvl_list[] = {
     { 1, "Pickles' Home (hub)" }, { 2, "Grandpa's Teeth" }, { 3, "Incident on Aisle 7" }, { 4, "7 Voyages of Cynthia" },
-    { 5, "Visitors from Outer Space" }, { 6, "Toy Palace" }, { 7, "Reptar 2010" }, { 9, "The Mysterious Mr. Friend" },
+    { 5, "Visitors from Outer Space" }, { 6, "Toy Palace" }, { 7, "Reptar 2010" },
+    { 8, "Ice Cream Mountain (cut level)" }, { 9, "The Mysterious Mr. Friend" },
     { 10, "Chuckie's Glasses" }, { 11, "Circus Angelicus" }, { 12, "Let There Be Light" }, { 13, "Cookie Race" },
     { 14, "The Return of Mr. Friend" }, { 15, "Mirrorland" }, { 16, "Training Level" }, { 17, "Gold Rush" },
     { 18, "Egg Hunt" }, { 19, "Be Bad (cut level)" }, { 20, "No More Cookies" }, { 21, "Touchdown Tommy" }, { 23, "Golf: hole 1" },

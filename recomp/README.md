@@ -707,9 +707,10 @@ Run nothing else heavy meanwhile. `contact_<config>.png` = one thumbnail per lev
 Level names in the report come from the game's own table. The default `--levels playable` runs 28 databases;
 these 4 are skipped (`--levels all` runs them anyway), because the released game can't play them from the hub:
 - 0 Menus: no level loop (always `timeout`).
-- 8 Ice Cream Mountain: LEVEL08.BIN stores its tables with 32-bit coordinates; every other level and the
-  engine's loader (`8002a208`) use 16-bit. Parsed the release way, its room table pointer lands past the end of
-  RAM (`0x80896c48`), so the level loop runs but draws nothing (black). Leftover data from an older format.
+- 8 Ice Cream Mountain: a cut level whose files (LEVEL08.BIN/.COL, DB08A.RAW, DB08LP) come from an older version of
+  the game's tools; the released loader (`8002a208`) reads them as garbage (room table past the end of RAM, black
+  screen). The port converts them from the player's disc when db 8 is requested (`icecream.c`, see "Level Select");
+  the bench still skips it by default because its numbers are not a released level's.
 - 19 Be Bad: a cut level. Its file-table slots (table `0x800B2C40`, 8 bytes per id: sector, size) are zeroed, e.g.
   id 453 = LEVEL19.BIN, so the loader reads stack junk as the size and MemAlloc fails. Most of its data IS on the
   disc, orphaned, in `DATA/DB19/` (LEVEL19.BIN/.COL, DB19A.RAW, DB19ANM, DB19LP, TEXPOS; no MOD/FRM/ROT/HIE, SFX or
@@ -881,8 +882,17 @@ Ball rolling (`8005fcb8`, stroke counted at launch): 1 swing in 3, 0.3 s later, 
 82, Chuckie 347, Angelica 598, Phil 820 868, Lil 949 995; unheard first, never the same twice in a row) if nothing
 else is playing. Off: original.
 
-Level Select (Enhancements page, "Level Select..." row): a list of the 28 playable levels plus the cut level "Be Bad"
-(game database numbers; not 0 menus, 8 Ice Cream Mountain, 22 Multiplayer Golf, see "Per-level performance test").
+Level Select (Enhancements page, "Level Select..." row): a list of the 28 playable levels plus the cut levels "Ice Cream
+Mountain" and "Be Bad" (game database numbers; not 0 menus, 22 Multiplayer Golf, see "Per-level performance test").
+Ice Cream Mountain (db 8) is converted from the disc's pre-release files the first time it is requested
+(`icecream.c`, nothing of the game is shipped): level geometry, portals and texture table to the released level
+format, collision to the released cell format, the texture sheet moved from VRAM (512,0) to the released level spot
+(0,256), and an object list holding only Tommy's start. The results are served as extra sectors from LBA 440000
+(`icm_sector`, asked by cdrom.c before the mods; mods place their files below that). About half its polygons used
+texture pages that were never on the disc; they show a brick tile from the level's own sheet. Its 24 other objects
+(old object ids) are left out, models and animations come from the Training Level, single-player camera (the per-db
+table `0x80012820` gives db 8 the multiplayer one). A castle / library / stone-tunnel level of 44 rooms; no goal or
+exit, leave with Level Select.
 Be Bad (db 19) is restored on the way there (`bebad_restore` in hooks.c: file slots, models and animations from the
 Training Level, db 16, which has Tommy's stair animations; single-player camera; unfinished greybox level, see HANDOFF
 Session log 2026-11-24). Going there

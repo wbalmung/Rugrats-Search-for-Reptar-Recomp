@@ -37,7 +37,8 @@ uint32_t cd_disc_sectors(void) { return disc_sectors; }
 
 /* what the game reads: a mod's replacement file (mods.c) or the image */
 int cd_read_sector_raw(uint32_t lba, uint8_t *out) {
-    int mods_sector(uint32_t lba, uint8_t *out);
+    int mods_sector(uint32_t lba, uint8_t *out), icm_sector(uint32_t lba, uint8_t *out);
+    if (icm_sector(lba, out)) return 1;   /* icecream.c: Ice Cream Mountain converted from this disc */
     if (mods_sector(lba, out)) return 1;
     if (!disc || lba >= disc_sectors) { memset(out, 0, 2352); return 0; }
     fseek(disc, (long)lba * 2352, SEEK_SET);
