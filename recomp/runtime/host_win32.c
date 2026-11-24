@@ -339,7 +339,6 @@ uint16_t host_pad_raw(int port) {
 }
 uint16_t host_pad_buttons(int port) {
     if (hooks_golf_holding()) return 0xFFFF;     /* Golf Reactions: hole end waits for the line, no input */
-    if (port == 0 && hooks_freecam_engaged()) return 0xFFFF;   /* Debug Freecam: the pad flies the camera */
     uint16_t b = 0;
     if (port == 0) b |= (uint16_t)test_input();
     if (port == 0 && GetForegroundWindow() == wnd)
@@ -351,6 +350,10 @@ uint16_t host_pad_buttons(int port) {
         if (b) b = 0;
         else pad_block = 0;
     }
+    /* Debug Freecam: the pad flies the camera. Checked after the block release above: returning before it left
+       pad_block set for good once the F1 menu closed (Freecam is switched on there), so host_pad_raw / host_rstick
+       read nothing and the freecam never moved (2026-11-24). */
+    if (port == 0 && hooks_freecam_engaged()) return 0xFFFF;
     return (uint16_t)~b;
 }
 
