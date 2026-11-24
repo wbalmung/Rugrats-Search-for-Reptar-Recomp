@@ -2838,7 +2838,7 @@ static void load_config(void) {
     opt.cut_smooth = GetPrivateProfileIntA("video", "cut_smooth", 1, ini) != 0;
     /* "Let There Be Light" Fixes; an ini from before the merge (2026-11-19) may only have the old Ceiling Fan key */
     opt.light_fixes = GetPrivateProfileIntA("game", "light_fixes", GetPrivateProfileIntA("game", "fan_still", 1, ini), ini) != 0;
-    opt.fan_still = opt.night_furn = opt.hedge_leaves = 1;
+    opt.fan_still = opt.night_furn = opt.hedge_leaves = opt.kitchen_arch = 1;
     opt.final_level = GetPrivateProfileIntA("game", "final_level", 1, ini) != 0;
     opt.rcam_override = GetPrivateProfileIntA("input", "rcam_override", 0, ini) != 0;
     bind_load(ini);
@@ -2953,6 +2953,7 @@ int main(int argc, char **argv) {
         if ((e = getenv("RUGRATS_FANSTILL"))) opt.fan_still = atoi(e) != 0;     /* debug: one part alone */
         if ((e = getenv("RUGRATS_NIGHTFURN"))) opt.night_furn = atoi(e) != 0;
         if ((e = getenv("RUGRATS_HEDGELEAVES"))) opt.hedge_leaves = atoi(e) != 0;
+        if ((e = getenv("RUGRATS_KITCHENARCH"))) opt.kitchen_arch = atoi(e) != 0;
         if ((e = getenv("RUGRATS_FINALLEVEL"))) opt.final_level = atoi(e) != 0;
         if ((e = getenv("RUGRATS_VOLS"))) sscanf(e, "%d,%d,%d", &opt.vol_music, &opt.vol_sfx, &opt.vol_voice); /* music,sfx,dialogue */
         if ((e = getenv("RUGRATS_SKIPINTRO"))) opt.skip_intro = atoi(e) != 0;

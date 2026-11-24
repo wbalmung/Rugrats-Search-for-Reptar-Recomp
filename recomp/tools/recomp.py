@@ -84,6 +84,7 @@ HOOKS = {
     0x800631d8: "player Triangle target finder (debug log RUGRATS_ENTLOG)",
     0x8004f78c: "level entrance Triangle handler (obj, player): obj+108 = db (debug log RUGRATS_ENTLOG)",
     0x800781f8: "queue 'leave level for db a1' message: After Last Piece option drops the go-to-final-level (db 7) one",
+    0x80033818: "room draw (room, cam, rect): db 12 draws the hub's kitchen doorway arch after room 27 (Let There Be Light Fixes)",
     0x80044b74: "model lookup by id: db 12 hedge leaves (0x3f0 from 80050b80) get a copy of the hub leaf, not the bank's first model",
     0x80094cfc: "new-game progress reset (pieces, bars) after the title: skipped once right after the ending (Final Level Behavior Enhanced)",
     0x8008a7ec: "called right after the main loop's db -1 progress wipe (ra 800182b8): Enhanced puts the ending's pieces / bars back",

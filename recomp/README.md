@@ -649,7 +649,8 @@ logs every list packet with its layer and each frame's room point count.
   moves in fixed 1/30 s steps, glide between those steps at high fps). `RUGRATS_TIMERLOG=1` logs every 1/30 s timer
   callback the game fires (frame, object, callback).
 - `RUGRATS_LIGHTFIXES=0/1` sets the "Let There Be Light" Fixes option (Enhancements); `RUGRATS_FANSTILL=0` /
-  `RUGRATS_NIGHTFURN=0` / `RUGRATS_HEDGELEAVES=0` turn off only its fan / furniture / hedge leaves part. `RUGRATS_FANLOG=1` logs every spinning-prop update
+  `RUGRATS_NIGHTFURN=0` / `RUGRATS_HEDGELEAVES=0` / `RUGRATS_KITCHENARCH=0` turn off only its fan / furniture / hedge leaves /
+  kitchen arch part (`RUGRATS_ARCHLOG=1` logs the arch load and first draws). `RUGRATS_FANLOG=1` logs every spinning-prop update
   (level, object, model, speeds, angles); `RUGRATS_NIGHTCLUT`, `RUGRATS_NIGHTDBG`, `RUGRATS_NIGHTLOG` are the furniture
   part's debug switches, `RUGRATS_NIGHTPOWER=0` keeps it dark after the power comes back in the ending
   cutscene (see "Let There Be Light" Fixes).
@@ -918,7 +919,16 @@ anims resume at that speed, so the walk plays at 2x until the player stops (same
 first walking frame where neither layer (`obj+0xa8`, `obj+0xb4`) plays 0x27/0x32.
 
 "Let There Be Light" Fixes (Enhancements page, ini `[game] light_fixes`: 1 Fixed = default, 0 Original; an older ini's
-`fan_still` key is used when `light_fixes` is missing; `RUGRATS_LIGHTFIXES`). Three parts, all only in db 12:
+`fan_still` key is used when `light_fixes` is missing; `RUGRATS_LIGHTFIXES`). Four parts, all only in db 12:
+
+Kitchen arch part (2026-11-24, debug `RUGRATS_KITCHENARCH=0` = this part off): the hub has an arch piece over the
+kitchen -> hall doorway (a world object, hub model bank id 0x17a, in room 27); db 12 uses the same house but never
+places it, so the top of that doorway is open and the clear colour shows through (same on a PS1). Fixed: the model is
+read once from the user's disc (DB01MOD.BIN through the game's file table), copied to 0x807FF500 in the port's RAM
+extension with a small object at 0x807FF400, and drawn through the game's own object draw right after db 12 draws
+room 27 (hook on the room draw `80033818`). Its three one-colour palettes get db 12's night versions, the ones db 12's
+own room polygons use in place of the hub's (55dd -> 4cdd, 559d -> 4c9d, 561d -> 4d1d). Not drawn once the power is back
+on in the ending cutscene.
 
 Hedge leaves part (debug `RUGRATS_HEDGELEAVES=0` = this part off): walking into a backyard hedge spawns leaves (the
 walk's puff `80050b5c` looks up model 0x3f0 with `80044b74`). db 12's model bank has no 0x3f0, and the lookup's

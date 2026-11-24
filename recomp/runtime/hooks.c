@@ -5121,4 +5121,152 @@ void hooks_leaf_state(StateIO *s) {
     ST(s, leaf_len); ST(s, leaf_from); ST(s, leaf_cols);
 }
 
+/* ---- Kitchen doorway arch in Let There Be Light (part of opt.light_fixes, 2026-11-24, user) ----------------------
+   The hub's kitchen -> hall doorway has an arch piece filling the top of the opening: a world object (model bank id
+   0x17a in DATA/DB01/DB01MOD.BIN, object model number 205, 14 vertices, 6 quads + 6 triangles), placed at
+   (29706, -3597, 4102) in room 27 (the hall), no rotation. db 12 uses the same house geometry (rooms 19 / 27 / 31 have
+   the same boxes and chunks) but never spawns that object and its model bank has no copy, so the top of the doorway
+   is open there (the clear colour shows through; the same on a PS1).
+   Fix: the model record is read once from the user's disc (the game's file table 0x800B2C40, id 243 = DB01MOD.BIN:
+   +0 c0de0001, +4 count, +8 count x (id << 21 | offset), records from 8 + 4 * count; record length = up to the next
+   offset), offsets turned into pointers the way the game's loader does (+0 = 1, +0xc / +0x14 / +0x1c = record + offset,
+   +0x18 = 0 when it equals the face list), copied to ARCH_MESH in the port's RAM extension (after the hedge leaf's
+   4 KB slot), with a minimal object at ARCH_OBJ (+0 flags 0, +4 identity matrix, +0x18 position, +0x3b room,
+   +0x40 draw 80031b84, +0x88 model). The room draw 80033818(room, cam, rect) is hooked: in db 12, after the game drew
+   room 27 (and its objects), the arch object is drawn with the same camera and rect through the normal object draw
+   80031b84 (all of the port's depth / sort fixes apply; obj+0x60 = the game's frame stamp keeps it to one draw).
+   Colours: every arch face samples entry 0 of a one-colour CLUT on texture page 0x33. The hub's room polygons use the
+   same three CLUTs, and the same room polygons in db 12 (matched by texture page + coordinates, GP0 logs of the
+   two newest user saves) use db 12's night versions, 36 rows higher: 55dd (frame, pale yellow f0f098) -> 4cdd,
+   559d (kitchen side, green 88b048) -> 4c9d, 561d (hall side, pink d88070) -> 4d1d. The arch's faces get those
+   CLUTs (ARCH_CLUT) and keep the neutral 0x808080 face colour, like db 12's room polygons. A face whose CLUT is not
+   in the table, or a db 12 CLUT whose entry 0 is 0 (transparent: VRAM not as expected), skips the arch.
+   Not drawn while the power is back on (night_want(): the ending cutscene's lit kitchen, room 44).
+   RUGRATS_KITCHENARCH=0 = this part off; RUGRATS_ARCHLOG=1 logs the load and the first draws. */
+#define ARCH_OBJ   0x807FF400u
+#define ARCH_MESH  0x807FF500u
+#define ARCH_MAX   0x400u
+#define ARCH_FILE  243u          /* DATA/DB01/DB01MOD.BIN */
+#define ARCH_ID    0x17au
+#define ARCH_ROOM  27u
+static const int32_t arch_pos[3] = { 29706, -3597, 4102 };
+static const uint16_t arch_clut[][2] = { { 0x55dd, 0x4cdd }, { 0x559d, 0x4c9d }, { 0x561d, 0x4d1d } };
+static uint8_t arch_rec[ARCH_MAX];
+static uint32_t arch_len;
+static uint32_t arch_index;
+static int arch_state;           /* 0 = not loaded yet, 1 = loaded, -1 = failed (never retried) */
+int cd_disc_read(uint32_t lba, uint8_t *out);
+static int arch_file_read(uint32_t lba, uint32_t size, uint32_t off, uint8_t *out, uint32_t n) {
+    if (off + n > size) return 0;
+    uint8_t sec[2352];
+    for (uint32_t done = 0; done < n;) {
+        const uint32_t pos = off + done, s = pos / 2048, in = pos % 2048;
+        if (!cd_disc_read(lba + s, sec)) return 0;
+        uint32_t k = 2048 - in;
+        if (k > n - done) k = n - done;
+        memcpy(out + done, sec + 24 + in, k);   /* mode 2 form 1: 24 header bytes, 2048 data */
+        done += k;
+    }
+    return 1;
+}
+static uint32_t arch_rd32(const uint8_t *p) { return (uint32_t)p[0] | p[1] << 8 | p[2] << 16 | (uint32_t)p[3] << 24; }
+static void arch_load(int lg) {
+    arch_state = -1;
+    const uint32_t lba = mem_r32(0x800B2C40u + ARCH_FILE * 8), size = mem_r32(0x800B2C40u + ARCH_FILE * 8 + 4);
+    uint8_t hd[8];
+    if (!size || !arch_file_read(lba, size, 0, hd, 8) || arch_rd32(hd) != 0xc0de0001u) {
+        rt_logf("arch: model bank not readable (file id %u, lba %u, size %u)\n", ARCH_FILE, lba, size); return;
+    }
+    const uint32_t n = arch_rd32(hd + 4);
+    if (n < 1 || n > 4096) return;
+    uint8_t *tab = malloc(n * 4);
+    if (!tab || !arch_file_read(lba, size, 8, tab, n * 4)) { free(tab); return; }
+    uint32_t off = 0xffffffffu, next = 0xffffffffu, idx = 0;
+    for (uint32_t i = 0; i < n; i++) { const uint32_t e = arch_rd32(tab + 4 * i); if ((e >> 21) == ARCH_ID) off = e & 0x1fffff; }
+    if (off != 0xffffffffu)
+        for (uint32_t i = 0; i < n; i++) {
+            const uint32_t o = arch_rd32(tab + 4 * i) & 0x1fffff;
+            if (o > off && o < next) next = o;
+            if (o < off) idx++;                   /* the loader's +4 = the record's place in offset order */
+        }
+    free(tab);
+    const uint32_t base = 8 + 4 * n;
+    if (off == 0xffffffffu) { rt_logf("arch: model %03x not in the bank\n", ARCH_ID); return; }
+    if (next == 0xffffffffu) next = size - base;
+    const uint32_t len = next - off;
+    if (len < 0x40 || len > ARCH_MAX || !arch_file_read(lba, size, base + off, arch_rec, len)) {
+        rt_logf("arch: model %03x record unusable (%u bytes)\n", ARCH_ID, len); return;
+    }
+    const uint32_t nv = arch_rd32(arch_rec + 0x10), vo = arch_rd32(arch_rec + 0x14), fo = arch_rd32(arch_rec + 0x1c);
+    if (nv < 3 || nv > 64 || vo + nv * 8 > len || fo + 4 > len) { rt_logf("arch: model %03x layout unexpected\n", ARCH_ID); return; }
+    arch_len = len; arch_index = idx; arch_state = 1;
+    if (lg) rt_logf("arch: model %03x from the disc, %u bytes, %u vertices, bank index %u\n", ARCH_ID, len, nv, idx);
+}
+/* write the model (pointers, night CLUTs) and the object to the RAM extension; 0 = can't (skip the arch) */
+static int arch_write(int lg) {
+    uint8_t m[ARCH_MAX];
+    memcpy(m, arch_rec, arch_len);
+    uint32_t w;
+    w = 1; memcpy(m, &w, 4);
+    w = arch_index; memcpy(m + 4, &w, 4);
+    const uint32_t fo = arch_rd32(m + 0x1c);
+    if (arch_rd32(m + 0x18) == fo) { w = 0; memcpy(m + 0x18, &w, 4); }
+    else { w = ARCH_MESH + arch_rd32(m + 0x18); memcpy(m + 0x18, &w, 4); }
+    for (int k = 0xc; k <= 0x1c; k += 8) { w = ARCH_MESH + arch_rd32(m + k); memcpy(m + k, &w, 4); }
+    uint32_t a = fo;                                     /* face groups: type low 16, count high 16; 0xff ends */
+    for (int g = 0; g < 16 && a + 4 <= arch_len; g++) {
+        const uint32_t hd = arch_rd32(m + a), type = hd & 0xffff, cnt = hd >> 16;
+        a += 4;
+        if (type == 0xff || !cnt) break;
+        const uint32_t st = (type == 0x34 || type == 0x24 || type == 0x3c || type == 0x2c) ? 0x18 :
+                            (type == 0x30 || type == 0x20 || type == 0x28 || type == 0x38) ? 0xc : 0;
+        if (!st || a + cnt * st > arch_len) { if (lg) rt_logf("arch: face group type %x unknown\n", type); return 0; }
+        for (uint32_t k = 0; k < cnt; k++, a += st) {
+            if (st != 0x18) continue;
+            uint8_t *f = m + a;
+            const uint16_t c = (uint16_t)(f[0xe] | f[0xf] << 8);
+            uint16_t to = 0;
+            for (size_t i = 0; i < sizeof arch_clut / sizeof arch_clut[0]; i++) if (arch_clut[i][0] == c) to = arch_clut[i][1];
+            if (!to || !(gpu_px_get((to & 0x3f) * 16, (to >> 6) & 0x1ff) & 0x7fff)) {
+                if (lg) rt_logf("arch: face clut %04x has no db 12 night colour (-> %04x): arch skipped\n", c, to);
+                return 0;
+            }
+            f[0xe] = (uint8_t)to; f[0xf] = (uint8_t)(to >> 8);
+        }
+    }
+    for (uint32_t i = 0; i < arch_len; i++) mem_w8(ARCH_MESH + i, m[i]);
+    for (uint32_t i = 0; i < 0x100; i += 4) mem_w32(ARCH_OBJ + i, 0);
+    mem_w16(ARCH_OBJ + 0x04, 0x1000); mem_w16(ARCH_OBJ + 0x0c, 0x1000); mem_w16(ARCH_OBJ + 0x14, 0x1000);
+    for (int i = 0; i < 3; i++) mem_w32(ARCH_OBJ + 0x18 + 4u * i, (uint32_t)arch_pos[i]);
+    mem_w8(ARCH_OBJ + 0x3b, (uint8_t)ARCH_ROOM);
+    mem_w32(ARCH_OBJ + 0x40, 0x80031b84u);
+    mem_w32(ARCH_OBJ + 0x88, ARCH_MESH);
+    mem_w16(ARCH_OBJ + 0x96, 205);
+    if (lg) rt_logf("arch: object at %08x, model at %08x\n", ARCH_OBJ, ARCH_MESH);
+    return 1;
+}
+void f_80033818(void);
+void f_80031b84(void);
+int rt_hook_80033818(void) {
+    static int in, lg = -1, run = -1, ok, draws;
+    if (in || cpu.r[4] != ARCH_ROOM || !opt.light_fixes || !opt.kitchen_arch || (int32_t)mem_r32(0x800C5678u) != 12)
+        return 0;
+    if (lg < 0) lg = getenv("RUGRATS_ARCHLOG") != NULL;
+    if (mem_r8(0x800E00C0u) == 44) return 0;           /* power back on (ending cutscene's lit kitchen) */
+    if (arch_state == 0) arch_load(lg);
+    if (arch_state != 1) return 0;
+    if (run != (int)hooks_level_vbl) { run = (int)hooks_level_vbl; ok = -1; draws = 0; }
+    /* (re)write when this level run has not yet, or the extension no longer holds it (state load, other build) */
+    if (ok < 0 || mem_r32(ARCH_OBJ + 0x88) != ARCH_MESH || mem_r32(ARCH_OBJ + 0x40) != 0x80031b84u ||
+        mem_r32(ARCH_MESH) != 1) ok = arch_write(lg);
+    if (!ok) return 0;
+    const uint32_t cam = cpu.r[5], rect = cpu.r[6];
+    in = 1;
+    f_80033818();                                        /* the room as the game draws it */
+    cpu.r[4] = ARCH_OBJ; cpu.r[5] = cam; cpu.r[6] = rect;
+    f_80031b84();                                        /* + the arch, like one of the room's objects */
+    in = 0;
+    if (lg && draws < 3) { draws++; rt_logf("arch: drawn with room %u (frame stamp %08x)\n", ARCH_ROOM, mem_r32(ARCH_OBJ + 0x60)); }
+    return 1;
+}
 
