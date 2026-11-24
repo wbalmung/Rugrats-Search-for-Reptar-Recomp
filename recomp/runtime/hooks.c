@@ -955,6 +955,9 @@ static int cutscene_prop(uint32_t obj) {
     return 0;
 }
 
+/* a streamed cutscene is running (8007412c called in the last 10 vblanks); gpu.c behind-camera faces */
+int hooks_cutscene_running(void) { return cut_seen && hooks_frame() - cut_last_vbl <= 10; }
+
 static int32_t div_trunc(int32_t a, int32_t b) {
     if (b == 0) return a >= 0 ? -1 : 1;                 /* MIPS div by zero (the game breaks before that) */
     if (a == INT32_MIN && b == -1) return INT32_MIN;

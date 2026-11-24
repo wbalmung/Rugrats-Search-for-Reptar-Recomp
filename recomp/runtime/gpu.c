@@ -3268,6 +3268,19 @@ static void exec_poly(uint32_t *f) {
     /* any polygon (wall, floor, object, textured or not) with a corner pinned at the screen limit or split from one,
        whose corners all carry their true 3D point */
     int reproj = 0;
+    /* Unclassified face with a corner behind the camera (2026-11-23, user: Toy Palace intro, first shot: a big blue
+       slab over Tommy). DM_HTEST = world corners, but not drawn through the room / object draw hooks. The cutscene's
+       shopping cart has such a face (untextured) with a corner just behind the lens (z -54): drawn from its true points
+       it covered the right half of the screen, but its game triangle is 79x803, which the PS1 drops (Redux: Tommy in the
+       cart, no slab). While a streamed cutscene runs (shots framed on the PS1), such a triangle that the PS1 would drop
+       for size stays dropped (behind_un, below). Not in gameplay: the stick camera pushed into a hedge in Let There Be
+       Light has the same kind of face (textured HTEST, also too big for the PS1), and there the true version fills
+       what would be a black wedge (tries: all unclassified faces -> wedges at hub + LTBL hedges; size rule only ->
+       LTBL wedge). RUGRATS_BEHINDOBJ=1 = old (always drawn from the true points). */
+    int behind_un = 0;
+    static int behind_obj = -1;
+    if (behind_obj < 0) { const char *e = getenv("RUGRATS_BEHINDOBJ"); behind_obj = e ? atoi(e) != 0 : 0; }
+    const int classed = v[0].dm == DM_WRITE || v[0].dm == DM_WNT || v[0].dm == DM_TEST || v[0].dm == DM_TW;
     if (clamppos() && (hr.buf || hw_s) && opt.subpixel) {
         reproj = 1;
         for (int k = 0; k < nv && reproj; k++) reproj = cp3[k].ok;
@@ -3276,7 +3289,11 @@ static void exec_poly(uint32_t *f) {
             for (int k = 0; k < nv && !any; k++) any = np_fromclamp(f[vi[k]], 0);
             /* a corner behind the camera (hooks.c near_room lets such room faces through): its projection is mirrored,
                not always pinned, so the game's polygon is garbage; drawn from the true points (clipped at z >= 1) */
-            for (int k = 0; k < nv && !any; k++) any = cp3[k].p[2] < 1.0f;
+            for (int k = 0; k < nv && !any; k++) {
+                int hooks_cutscene_running(void);
+                any = cp3[k].p[2] < 1.0f;
+                behind_un = any && !classed && hooks_cutscene_running();
+            }
             if (!any && bigtri()) {
                 /* too big for the PS1 GPU (> 1023 x 511) with every corner really projected (in front of the lens, not
                    pinned): a door frame right at the stick camera spans ~620 lines; the PS1 drops it and the next room
@@ -3342,7 +3359,8 @@ static void exec_poly(uint32_t *f) {
                 const int room = v[t].dm == DM_WRITE || v[t].dm == DM_WNT;
                 int pinned = 0;   /* positions from pinned corners: the PS1's drop stands (tree trunk at the lens) */
                 for (int k = 0; k < 3 && !pinned; k++) pinned = np_fromclamp(f[vi[t + k]], 0);
-                if ((x1 - x0 > 1023 || y1 - y0 > 511) && pinned && !(room && x1 > x0 && y1 > y0)) {
+                if ((x1 - x0 > 1023 || y1 - y0 > 511) &&
+                    ((pinned && !(room && x1 > x0 && y1 > y0)) || (behind_un && !behind_obj))) {
                     if (gpu_cmdlog) rt_logf("   clamp_draw: tri %d too big for the PS1 (%dx%d), skipped\n", t, x1 - x0, y1 - y0);
                     continue;
                 }
