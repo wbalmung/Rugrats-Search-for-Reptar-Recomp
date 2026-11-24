@@ -2780,6 +2780,93 @@ static void tri_attr(const Vtx *const t[3], double x, double y, Vtx *w) {
     if (!(w->zs > 0)) w->zs = 1e-12f;   /* > 0 also marks a hi-res-only piece */
 }
 
+/* Lens fix (hi-res only; frames without the 3D world: title, menus, loading screens; RUGRATS_LENSFIX=0 = off, also
+   off with "Fix model sort glitches" off). Chuckie peeking in on the title: the game sorts a face triangle of his head
+   that lies BEHIND his lower glasses lens (white, semi-transparent B+F/4) after the lens, so it paints a skin wedge
+   over the lens corner (the PS1 draws the same list; at 4x it is a sharp triangle). Each semi-transparent object
+   triangle with a model id is remembered for the frame; when a later opaque triangle of the SAME model overlaps it and
+   lies behind it there, the lens is blended again over just that overlap (lens clipped to the triangle, hi-res only),
+   so the face shows through the lens like everywhere else. World frames already get this from the glass fix
+   (glass_q moves semi faces past objsort faces). 2026-11-23. */
+#define LENS_MAX 128
+typedef struct { Vtx t[3]; unsigned oid; St st; int textured, gouraud, raw, clutx, cluty, tpx, tpy, depth; } LensTri;
+static LensTri lens_q[LENS_MAX];
+static int lens_n;
+static struct {
+    int on, nv, semi, textured, gouraud, raw, clutx, cluty, tpx, tpy, depth;
+    unsigned oid;
+    Vtx v[4];
+    St st;
+} lens_pend;
+static int lensfix(void) {
+    static int on = -1;
+    if (on < 0) { const char *e = getenv("RUGRATS_LENSFIX"); on = e ? atoi(e) : 1; }
+    return on && opt.objsort;
+}
+static double lens_iz(const Vtx *const t[3], double x, double y) {   /* depth plane (1/z, screen-linear) at x, y */
+    double px[3], py[3];
+    for (int i = 0; i < 3; i++) { px[i] = t[i]->x + t[i]->fx / 256.0; py[i] = t[i]->y + t[i]->fy / 256.0; }
+    const double area = (px[1] - px[0]) * (py[2] - py[0]) - (px[2] - px[0]) * (py[1] - py[0]);
+    if (!area) return t[0]->iz;
+    const double l1 = ((x - px[0]) * (py[2] - py[0]) - (px[2] - px[0]) * (y - py[0])) / area;
+    const double l2 = ((px[1] - px[0]) * (y - py[0]) - (x - px[0]) * (py[1] - py[0])) / area;
+    return (1.0 - l1 - l2) * t[0]->iz + l1 * t[1]->iz + l2 * t[2]->iz;
+}
+static void lens_post(void) {   /* after exec_poly drew the polygon (dispatcher) */
+    if (!lens_pend.on) return;
+    lens_pend.on = 0;
+    const int ntri = lens_pend.nv == 4 ? 2 : 1;
+    if (lens_pend.semi) {
+        for (int t = 0; t < ntri && lens_n < LENS_MAX; t++) {
+            LensTri *q = &lens_q[lens_n++];
+            for (int k = 0; k < 3; k++) q->t[k] = lens_pend.v[t + k];
+            q->oid = lens_pend.oid; q->st = lens_pend.st; q->textured = lens_pend.textured; q->gouraud = lens_pend.gouraud;
+            q->raw = lens_pend.raw; q->clutx = lens_pend.clutx; q->cluty = lens_pend.cluty; q->tpx = lens_pend.tpx;
+            q->tpy = lens_pend.tpy; q->depth = lens_pend.depth;
+        }
+        return;
+    }
+    for (int i = 0; i < lens_n; i++) {
+        const LensTri *L = &lens_q[i];
+        if (L->oid != lens_pend.oid) continue;
+        const Vtx *lt[3] = { &L->t[0], &L->t[1], &L->t[2] };
+        for (int t = 0; t < ntri; t++) {
+            const Vtx *pt[3] = { &lens_pend.v[t], &lens_pend.v[t + 1], &lens_pend.v[t + 2] };
+            double qx[10], qy[10], rx[10], ry[10], px[3], py[3];
+            int n = 3;
+            for (int k = 0; k < 3; k++) {
+                qx[k] = lt[k]->x + lt[k]->fx / 256.0; qy[k] = lt[k]->y + lt[k]->fy / 256.0;
+                px[k] = pt[k]->x + pt[k]->fx / 256.0; py[k] = pt[k]->y + pt[k]->fy / 256.0;
+            }
+            const double pa = (px[1] - px[0]) * (py[2] - py[0]) - (px[2] - px[0]) * (py[1] - py[0]);
+            if (fabs(pa) < 1e-6) continue;
+            for (int e = 0; e < 3 && n >= 3; e++) {   /* lens triangle inside this triangle */
+                const int a = e, b = (e + 1) % 3;
+                n = clip_side(qx, qy, n, px[a], py[a], px[b], py[b], pa > 0 ? 1 : -1, rx, ry);
+                for (int m = 0; m < n; m++) { qx[m] = rx[m]; qy[m] = ry[m]; }
+            }
+            if (n < 3) continue;
+            double ar = 0;
+            for (int m = 0; m < n; m++) ar += qx[m] * qy[(m + 1) % n] - qx[(m + 1) % n] * qy[m];
+            if (fabs(ar) < 0.02) continue;   /* only touching */
+            /* behind the lens over the whole overlap (1/z: larger = nearer), by a little more than rounding */
+            int behind = 1;
+            for (int m = 0; m < n && behind; m++)
+                behind = lens_iz(lt, qx[m], qy[m]) > lens_iz(pt, qx[m], qy[m]) * 1.0005;
+            if (gpu_cmdlog) {
+                rt_logf("   lensfix: lens %d model %u, overlap %d corners area %.1f px: %s\n", i, L->oid, n, fabs(ar) * 0.5,
+                        behind ? "behind the lens, lens blended again" : "not behind, kept");
+            }
+            if (!behind) continue;
+            Vtx o[10];
+            for (int m = 0; m < n; m++) tri_attr(lt, qx[m], qy[m], &o[m]);
+            for (int m = 1; m + 1 < n; m++)
+                hr_tri_emit(&L->st, o[0], o[m], o[m + 1], L->textured, L->gouraud, 1, L->raw, L->clutx, L->cluty, L->tpx,
+                            L->tpy, L->depth);
+        }
+    }
+}
+
 unsigned fp_poly;   /* RUGRATS_FRAMEPROF: polygons this present (host_win32.c) */
 /* back faces the GTE let through this frame (see "Back faces behind front faces" in exec_poly): screen triangles
    keyed by their three corner words (packet format y << 16 | x, 11 bits each), any order */
@@ -3158,6 +3245,25 @@ static void exec_poly(uint32_t *f) {
         }
     }
     for (int k = 0; k < nv; k++) v[k].dm = dm;
+    lens_pend.on = 0;
+    if (!gpu_world_frame && (hr.buf || hw_s) && lensfix()) {   /* see lens_post */
+        uint32_t cs[4];
+        float zz[4];
+        int k;
+        for (k = 0; k < nv; k++) {
+            cs[k] = f[vi[k]];
+            if (tiz[k] > 0) zz[k] = tiz[k];
+            else if (!subpx_z(cs[k], DCLS_OBJ, &zz[k])) break;
+        }
+        const unsigned id = k == nv ? subpx_common_oid(cs, nv) : 0;
+        if (id && (semi_on || lens_n)) {
+            lens_pend.on = 1; lens_pend.nv = nv; lens_pend.semi = semi_on != 0; lens_pend.oid = id;
+            lens_pend.textured = tex; lens_pend.gouraud = gour; lens_pend.raw = raw; lens_pend.clutx = clutx;
+            lens_pend.cluty = cluty; lens_pend.tpx = tpx; lens_pend.tpy = tpy; lens_pend.depth = depth;
+            lens_pend.st = cur_st();
+            for (k = 0; k < nv; k++) { lens_pend.v[k] = v[k]; lens_pend.v[k].iz = zz[k]; }
+        }
+    }
     glass_cur = 0;
     if (dm == DM_TEST && semi_on && (hw_s || hr.buf) && glass_on()) {   /* see glass_q */
         for (int k = 0; k < nv; k++) v[k].oid |= (int)OID_GLASS;
@@ -3530,7 +3636,7 @@ static void exec(uint32_t *f, int n) {
     }
     if (glass_n && op >= 0x40 && op < 0x80) gpu_glass_flush();   /* glass before a squeezed sprite/line (Stretch 2D) */
     sq_set();
-    if (op >= 0x20 && op < 0x40) { exec_poly(f); glass_cur = 0; sq_on = 0; return; }
+    if (op >= 0x20 && op < 0x40) { exec_poly(f); glass_cur = 0; lens_post(); sq_on = 0; return; }
     if (glass_n && (op == 0x02 || op >= 0x40 && op < 0xE0)) gpu_glass_flush();   /* line / sprite / fill / VRAM transfer: glass first */
     if (op >= 0x40 && op < 0x60) {
         int gour = op & 0x10, semi_on = op & 2;
@@ -3661,7 +3767,7 @@ void gpu_gp0(uint32_t v) {
             switch (op) {
             case 0xE1: set_texpage(v); break;
             case 0xE2: g.twmx = v & 31; g.twmy = (v >> 5) & 31; g.twox = (v >> 10) & 31; g.twoy = (v >> 15) & 31; break;
-            case 0xE3: if (glass_n) gpu_glass_flush(); g.dx1 = v & 1023; g.dy1 = (v >> 10) & 511; dup_gen++; hud_3d = 0; break;   /* new frame for the repeat check */
+            case 0xE3: if (glass_n) gpu_glass_flush(); lens_n = 0; g.dx1 = v & 1023; g.dy1 = (v >> 10) & 511; dup_gen++; hud_3d = 0; break;   /* new frame for the repeat check */
             case 0xE4: g.dx2 = v & 1023; g.dy2 = (v >> 10) & 511; break;
             case 0xE5: g.offx = sext11(v); g.offy = sext11(v >> 11); break;
             case 0xE6: g.mask_set = v & 1; g.mask_check = (v >> 1) & 1; break;

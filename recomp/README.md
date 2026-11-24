@@ -271,6 +271,12 @@ tries fewer, then Off (logged). Alpha-tested cut-outs (texel 0) keep hard inner 
   The check runs only in frames that show the 3D world (room geometry, `gpu_world_frame`): the title screen draws no
   fill, so its depth was never cleared and the babies peeking in at the bottom corners stayed hidden.
   `RUGRATS_DEPTHWORLD=0` = old (every frame).
+  **Lenses on the title** (part of "Fix model sort glitches", hi-res only, frames without the 3D world;
+  `RUGRATS_LENSFIX=0` = off): Chuckie peeking in at the top right has a face triangle behind his lower glasses lens that
+  the game sorts after the lens (white, semi-transparent), so it painted a skin wedge over the lens corner (the PS1
+  draws the same list; at 4x it is a sharp triangle). Semi-transparent object triangles with a model id are remembered
+  for the frame; a later opaque triangle of the same model that overlaps one and lies behind it there gets the lens
+  blended again over just that overlap. GP0 log: `lensfix:` lines. In world frames the glass fix already does this.
   Room water surfaces (the sewer's brown water, drawer `80030ce0`) are tested like objects: the water grid runs on
   under the raised floor beside it and the game sorts it after that floor, so square bits of water showed through
   the ledge and popped in and out as the camera turned. `RUGRATS_WATERDEPTH=0` = old (water never tested).
