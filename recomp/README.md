@@ -976,7 +976,11 @@ screen, the puzzle (`80092c68`) and the "You did it!" screen inside that frame o
 `800781f8(player, 7)` = "leave for database 7" (the final level), from the end of the puzzle (ra `80092d7c`) and from the
 bar pickup (ra `8005180c`). The message's handler `800771d4` writes the database to `0x800C4918`, which ends the level
 loop. A hook on `800781f8` drops those two db-7 messages only, so play goes on where the bar was taken.
-The other db-7 senders (`80018364`, `8004d414`) are not touched. Note: with this on, the final level is not reached
+Levels that end some other way (Mirrorland's last balloon etc.) earn their piece in the level-complete handler
+`80076d6c` (or the main loop's level exit `80018208`), which also runs the puzzle through `80094978` ("all 12 just
+earned?", which also shows "You did it!") and on 1 sends db 7 (ra `80077030` / `80018364`) in place of the level's
+normal exit. A hook on `80094978` makes it return 0 to those two callers (ra `80076ea8` / `80018318`), so the level
+ends as it does for pieces 1-11 (Mirrorland: "Returning to Pickles' Home", hub). `8004d414` is not touched. Note: with this on, the final level is not reached
 through the puzzle (use the TV, Level Select, or set the option to Default).
 Puzzle facts: piece positions (x, y halfwords, 8 bytes each) at `0x800E7260`, homes at `0x800BB38C`, start spots at
 `0x800BB32C`; d-pad moves the held piece 7 (x) / 3 (y) per game frame; X places it if

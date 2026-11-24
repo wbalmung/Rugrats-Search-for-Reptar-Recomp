@@ -3748,6 +3748,26 @@ int rt_hook_800781f8(void) {
     if (opt.final_level && (ra == 0x8005180cu || ra == 0x80092d7cu)) return 1;
     return 0;
 }
+/* Level-end exits (part of opt.final_level, 2026-11-23, user: Mirrorland's last balloon with 11 pieces -> Reptar 2010).
+   80094978 = "earned all 12?" check that also runs the "You did it!" screen; returns 1 the one time the 12th piece
+   is earned. Callers: bar pickup (ra 800517f8, its db 7 send dropped above), level-complete handler 80076d6c
+   (ra 80076ea8: 1 and flag 0x200 clear -> 800781f8(player, 7) from ra 80077030, which also skips the story
+   counter / db 15's own hub exit) and the main loop's level exit 80018208 (ra 80018318: same, db 7 from 80018364).
+   Enhanced: for the last two the result reads 0, so the level ends exactly as it does for pieces 1-11. */
+void f_80094978(void);
+int rt_hook_80094978(void) {
+    static int inside;
+    uint32_t ra = cpu.r[31];
+    if (inside || !opt.final_level || (ra != 0x80076ea8u && ra != 0x80018318u)) return 0;
+    inside = 1;
+    f_80094978();
+    inside = 0;
+    if (cpu.r[2]) rt_logf("level: all pieces at level end (ra %08x, db %d) -> normal exit: Final Level Behavior = Enhanced\n",
+                          ra, hooks_level);
+    cpu.r[2] = 0;
+    cpu.r[31] = ra;
+    return 1;
+}
 /* "Final level unlocked!" screen (part of opt.final_level): 80093048 = one
    puzzle message screen (fade in, wait for X, fade out). Its caller 80094978 (all 12 pieces, ra 800949d0) first sets
    up the "You did it!" text with 80094178: three line objects (0x2c bytes each) at 0x800E7300 (yellow, pink, pink)
