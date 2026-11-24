@@ -173,6 +173,7 @@ typedef struct {
                             (power out) the kitchen ceiling fan stands still and the daytime-coloured furniture textures
                             get night colours; 0 = original. Parts below can be turned off alone for debugging. */
     int fan_still;       /* part (debug RUGRATS_FANSTILL, default 1): fan stands still; hooks.c rt_hook_8004e2ac */
+    int hedge_leaves;    /* part (debug RUGRATS_HEDGELEAVES, default 1): hedges shed leaves, not boxes; hooks.c leaf_* */
     int night_furn;      /* part (debug RUGRATS_NIGHTFURN, default 1): furniture night colours; hooks.c night_frame */
     int final_level;     /* Final Level Behavior. 1 = Enhanced: after the last puzzle piece, a "Final level unlocked!"
                             screen, then stay in the level where the bar was taken; the hub TV is the entrance to the

@@ -143,7 +143,7 @@ static uint32_t pkt_start, pkt_last, pkt_rooms_off_until;
 static int pkt_env(const char *name, int def) { const char *e = getenv(name); return e ? atoi(e) : def; }
 static uint32_t pkt_ring_kb(void) {
     static int kb = -1;
-    if (kb < 0) { kb = pkt_env("RUGRATS_BIGRING", 2048); if (kb < 0) kb = 0; if (kb > 6144) kb = 6144; }
+    if (kb < 0) { kb = pkt_env("RUGRATS_BIGRING", 2048); if (kb < 0) kb = 0; if (kb > 6140) kb = 6140; }   /* last 4 KB: hedge leaf model (LEAF_ADDR) */
     return (uint32_t)kb;
 }
 static void pkt_ring_place(void) {
@@ -1144,6 +1144,8 @@ void hooks_state(StateIO *s) {
     hooks_timer_state(s);
     void hooks_night_state(StateIO *s);
     hooks_night_state(s);
+    void hooks_leaf_state(StateIO *s);
+    hooks_leaf_state(s);
     if (st_loading(s)) { void hooks_dmg_reset(void); hooks_dmg_reset(); }
 }
 
@@ -2475,7 +2477,7 @@ int rt_hook_80072d38(void) {
 }
 int rt_hook_80072bf0(void) {
     if (!lbl_inside) tv_frame();      /* TV to Final Level: once per game frame, before the timers fire */
-    if (!lbl_inside) { void hooks_night_frame(void); hooks_night_frame(); }   /* "Let There Be Light" Fixes (furniture) */
+    if (!lbl_inside) { void hooks_night_frame(void); hooks_night_frame(); void hooks_leaf_frame(void); hooks_leaf_frame(); }   /* "Let There Be Light" Fixes (furniture) */
     if (lbl_inside || !opt.fixed_timestep) return 0;
     lbl_inside = 1;
     lbl_nfired = 0;
@@ -4315,7 +4317,10 @@ int rt_hook_8007013c(void) { sfx_log("013c"); return 0; }
    120 fps). Past 32 the sprite allocation fails, those particles keep empty texture fields and draw as quads with
    palette 0 / texture page 0 / uv 0 = the top-left screen pixels, added (semi mode 1) about 100-175 times = the
    white blob, plus the game's 150-packet cap left gaps. Fix: same game-time gate as the feathers, one fire particle
-   per 300/9.8 ticks. RUGRATS_FIRERATE=0 = old (one per frame). */
+   per 300/9.8 ticks. RUGRATS_FIRERATE=0 = old (one per frame).
+   Leaves / grass puffs while walking (2026-11-23, PCSX-Redux replay of the user's hub hedge save: 70 spawns in 300
+   vsyncs, at most one per game frame at 30 fps; ra 80050c34): the port spawned one per drawn frame, ~4x the leaves at
+   120 fps. Gate: at most one per 2 vblanks (hooks_frame, 1/30 s). RUGRATS_LEAFRATE=0 = old. */
 static double fire_acc;
 int rt_hook_8008864c(void) {
     static int lg = -1, on = -1, fon = -1;
@@ -4340,8 +4345,20 @@ int rt_hook_8008864c(void) {
         if (fire_acc < ref) skip = 1;
         else { fire_acc -= ref; if (fire_acc > ref) fire_acc = 0; }   /* no bursts */
     }
-    if (lg) rt_logf("part f%u ra %08x up %08x desc %08x type %08x ticks %u db %d%s\n", present_count, cpu.r[31],
-                    mem_r32(cpu.r[29] + 0x18u), cpu.r[4], mem_r32(cpu.r[4]), ticks, (int)db, skip ? " skip" : "");
+    if (cpu.r[31] == 0x80050c34u) {   /* hedge / grass leaves (footstep puff 80050b5c) */
+        int hooks_leaf_drop(void);
+        if (hooks_leaf_drop()) skip = 1;   /* db 12 without a leaf model (see "Hedge leaves" below) */
+        static int lon = -1;
+        static uint32_t leaf_last;
+        if (lon < 0) { const char *e = getenv("RUGRATS_LEAFRATE"); lon = !(e && *e == '0'); }
+        if (lon && !skip) {   /* at most one leaf per PS1 game frame (1/30 s = 2 vblanks), not one per drawn frame */
+            const uint32_t now = hooks_frame();
+            if (now - leaf_last < 2u) skip = 1; else leaf_last = now;
+        }
+    }
+    if (lg) rt_logf("part f%u ra %08x up %08x desc %08x type %08x ticks %u db %d%s model %08x f10 %08x\n", present_count,
+                    cpu.r[31], mem_r32(cpu.r[29] + 0x18u), cpu.r[4], mem_r32(cpu.r[4]), ticks, (int)db, skip ? " skip" : "",
+                    mem_r32(cpu.r[4] + 0x50u), mem_r32(cpu.r[4] + 0x10u));
     if (skip) { cpu.r[2] = 0; return 1; }
     return 0;
 }
@@ -4841,3 +4858,113 @@ int rt_hook_80091d50(void) {
             mem_r16(0x800C56BCu));
     return 1;
 }
+
+/* ---- Hedge leaves in Let There Be Light (part of opt.light_fixes, 2026-11-23, user) ------------------------------
+   Walking into a backyard hedge spawns leaf particles: 80050b5c looks up model 0x3f0 (80044b74, ra 80050b80) and spawns
+   a particle with it (8008864c, ra 80050c34). The hub's model bank has 0x3f0 = the leaf (a 4-vertex quad, 2 textured
+   faces, texture page 0x32 / CLUT 0x495d). db 12's bank has no 0x3f0; 80044b74's binary search then returns the bank's
+   first model (offset 0), a 6-face box, so the hedge sheds boxes (game data; the same on a PS1). db 12's VRAM holds the
+   leaf texels at the same place and the same 16 leaf colours under another CLUT (0x65dc in the user's save).
+   Fix: while the hub runs, the leaf model (bytes up to the next model in the bank) and its 16 colours are copied (host
+   side, in save states as "hooks.leaf_*"). In db 12 the leaf lookup returns a copy written to LEAF_ADDR (the last 4 KB of
+   the port's 8 MB RAM; the packet ring is capped below it), pointers moved, the CLUT of each face set to the db 12 CLUT
+   with the same colours, face colours given the night tone (night_col). If the hub was not seen yet this run (state
+   loaded straight into db 12 from an older build) or no matching CLUT is found, the leaf particles are skipped instead.
+   RUGRATS_HEDGELEAVES=0 = this part off; RUGRATS_PARTLOG also logs the leaf lookups. */
+#define LEAF_ID   0x3f0u
+#define LEAF_ADDR 0x807FF000u
+#define LEAF_MAX  0x400u
+static uint8_t leaf_src[LEAF_MAX];
+static uint32_t leaf_len, leaf_from;
+static uint16_t leaf_cols[16];
+static int leaf_clut_run = -1;                 /* hooks_level_vbl of the db 12 run the CLUT was searched in */
+static uint16_t leaf_clut;                     /* db 12 CLUT word with the leaf colours (0 = none) */
+static int leaf_skip;                          /* the next leaf spawn (ra 80050c34) is dropped */
+static int leaf_faces(const uint8_t *m, uint32_t len, uint32_t from, uint32_t *fo, unsigned *cnt) {
+    uint32_t fl; memcpy(&fl, m + 0x1c, 4);
+    if (fl < from || fl + 4 > from + len) return 0;
+    const uint32_t o = fl - from;
+    const unsigned n = (unsigned)(m[o + 2] | m[o + 3] << 8);
+    if (n < 1 || n > 8 || o + 4 + n * 0x18u > len) return 0;
+    *fo = o + 4; *cnt = n;
+    return 1;
+}
+static uint32_t leaf_lookup(uint32_t id, uint32_t *len) {  /* 80044b74 without the not-found fallback; 0 = none */
+    const uint32_t gp = 0x800C3E80u, base = mem_r32(gp + 0xcecu), tab = mem_r32(gp + 0x2acu);
+    if (!base || !tab || mem_r16(tab + 2) != 0xc0deu) return 0;
+    const int n = (int16_t)mem_r16(gp + 0x2b0u);
+    uint32_t off = 0xffffffffu, next = 0xffffffffu;
+    for (int i = 0; i < n; i++) { const uint32_t e = mem_r32(tab + 8 + 4u * i); if ((e >> 21) == id) off = e & 0x1fffff; }
+    if (off == 0xffffffffu) return 0;
+    for (int i = 0; i < n; i++) { const uint32_t o = mem_r32(tab + 8 + 4u * i) & 0x1fffff; if (o > off && o < next) next = o; }
+    *len = next == 0xffffffffu ? 0 : next - off;
+    return base + off;
+}
+void hooks_leaf_frame(void) {                  /* once per game frame: take the leaf from the hub */
+    if (leaf_len || (int32_t)mem_r32(0x800C5678u) != 1) return;
+    uint32_t len = 0;
+    const uint32_t a = leaf_lookup(LEAF_ID, &len);
+    if (!a || len < 0x20 || len > LEAF_MAX) return;
+    uint8_t m[LEAF_MAX];
+    for (uint32_t i = 0; i < len; i++) m[i] = mem_r8(a + i);
+    uint32_t fo; unsigned cnt;
+    if (!leaf_faces(m, len, a, &fo, &cnt)) return;
+    const uint16_t clut = (uint16_t)(m[fo + 0xe] | m[fo + 0xf] << 8);
+    for (int i = 0; i < 16; i++) leaf_cols[i] = gpu_px_get((clut & 0x3f) * 16 + i, (clut >> 6) & 0x1ff);
+    memcpy(leaf_src, m, len); leaf_from = a; leaf_len = len;
+    rt_logf("leaf: hub model %03x at %08x, %u bytes, %u faces, clut %04x\n", LEAF_ID, a, len, cnt, clut);
+}
+static uint16_t leaf_find_clut(void) {         /* a CLUT in VRAM with exactly the hub leaf's colours */
+    for (int y = 0; y < 512; y++)
+        for (int x = 0; x < 1024; x += 16) {
+            int i = 0;
+            while (i < 16 && gpu_px_get(x + i, y) == leaf_cols[i]) i++;
+            if (i == 16) return (uint16_t)((y << 6) | (x >> 4));
+        }
+    return 0;
+}
+int rt_hook_80044b74(void) {
+    if (cpu.r[4] != LEAF_ID || cpu.r[31] != 0x80050b80u || (int32_t)mem_r32(0x800C5678u) != 12 ||
+        !opt.light_fixes || !opt.hedge_leaves) return 0;
+    static int lg = -1;
+    if (lg < 0) lg = getenv("RUGRATS_PARTLOG") != NULL;
+    if (leaf_len && leaf_clut_run != (int)hooks_level_vbl) {
+        leaf_clut_run = (int)hooks_level_vbl;
+        leaf_clut = leaf_find_clut();
+        rt_logf("leaf: db 12 clut with the leaf colours: %04x\n", leaf_clut);
+    }
+    uint32_t fo; unsigned cnt;
+    if (!leaf_len || !leaf_clut || !leaf_faces(leaf_src, leaf_len, leaf_from, &fo, &cnt)) {
+        leaf_skip = 1;
+        if (lg) rt_logf("leaf: no leaf model (hub not seen / no clut): spawn dropped\n");
+        return 0;                              /* the original runs; its particle is dropped in 8008864c */
+    }
+    uint8_t m[LEAF_MAX];
+    memcpy(m, leaf_src, leaf_len);
+    for (uint32_t i = 0; i + 4 <= leaf_len; i += 4) {      /* pointers into the model follow it */
+        uint32_t w; memcpy(&w, m + i, 4);
+        if (w >= leaf_from && w < leaf_from + leaf_len) { w = w - leaf_from + LEAF_ADDR; memcpy(m + i, &w, 4); }
+    }
+    for (unsigned k = 0; k < cnt; k++) {
+        uint8_t *f = m + fo + k * 0x18u;
+        f[0xe] = (uint8_t)leaf_clut; f[0xf] = (uint8_t)(leaf_clut >> 8);
+        uint32_t c; memcpy(&c, f + 8, 4); c = night_col(c); memcpy(f + 8, &c, 4);
+    }
+    for (uint32_t i = 0; i < leaf_len; i++) mem_w8(LEAF_ADDR + i, m[i]);
+    if (lg) rt_logf("leaf: db 12 lookup -> copy at %08x (clut %04x)\n", LEAF_ADDR, leaf_clut);
+    cpu.r[2] = LEAF_ADDR;
+    return 1;
+}
+int hooks_leaf_drop(void) { const int d = leaf_skip; leaf_skip = 0; return d; }
+void hooks_leaf_state(StateIO *s) {
+    if (!st_loading(s)) {
+        st_field(s, "leaf_src", leaf_src, sizeof leaf_src);
+        ST(s, leaf_len); ST(s, leaf_from); ST(s, leaf_cols);
+        return;
+    }
+    leaf_clut_run = -1;
+    if (!st_has(s, "leaf_len")) return;        /* older state: keep what this run already took from the hub */
+    st_field(s, "leaf_src", leaf_src, sizeof leaf_src);
+    ST(s, leaf_len); ST(s, leaf_from); ST(s, leaf_cols);
+}
+

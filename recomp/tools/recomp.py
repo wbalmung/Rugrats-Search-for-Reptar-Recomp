@@ -84,6 +84,7 @@ HOOKS = {
     0x800631d8: "player Triangle target finder (debug log RUGRATS_ENTLOG)",
     0x8004f78c: "level entrance Triangle handler (obj, player): obj+108 = db (debug log RUGRATS_ENTLOG)",
     0x800781f8: "queue 'leave level for db a1' message: After Last Piece option drops the go-to-final-level (db 7) one",
+    0x80044b74: "model lookup by id: db 12 hedge leaves (0x3f0 from 80050b80) get a copy of the hub leaf, not the bank's first model",
     0x80093048: "puzzle message screen (fade in, wait X, fade out): after 'You did it!' (ra 800949d0) show 'Final level unlocked!'",
     0x8006f3a4: "sound effect wrapper: sfx debug log",
     0x8006f438: "sound effect wrapper: sfx debug log",

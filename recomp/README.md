@@ -643,7 +643,7 @@ logs every list packet with its layer and each frame's room point count.
   moves in fixed 1/30 s steps, glide between those steps at high fps). `RUGRATS_TIMERLOG=1` logs every 1/30 s timer
   callback the game fires (frame, object, callback).
 - `RUGRATS_LIGHTFIXES=0/1` sets the "Let There Be Light" Fixes option (Enhancements); `RUGRATS_FANSTILL=0` /
-  `RUGRATS_NIGHTFURN=0` turn off only its fan / furniture part. `RUGRATS_FANLOG=1` logs every spinning-prop update
+  `RUGRATS_NIGHTFURN=0` / `RUGRATS_HEDGELEAVES=0` turn off only its fan / furniture / hedge leaves part. `RUGRATS_FANLOG=1` logs every spinning-prop update
   (level, object, model, speeds, angles); `RUGRATS_NIGHTCLUT`, `RUGRATS_NIGHTDBG`, `RUGRATS_NIGHTLOG` are the furniture
   part's debug switches, `RUGRATS_NIGHTPOWER=0` keeps it dark after the power comes back in the ending
   cutscene (see "Let There Be Light" Fixes).
@@ -909,7 +909,18 @@ anims resume at that speed, so the walk plays at 2x until the player stops (same
 first walking frame where neither layer (`obj+0xa8`, `obj+0xb4`) plays 0x27/0x32.
 
 "Let There Be Light" Fixes (Enhancements page, ini `[game] light_fixes`: 1 Fixed = default, 0 Original; an older ini's
-`fan_still` key is used when `light_fixes` is missing; `RUGRATS_LIGHTFIXES`). Two parts, both only in db 12:
+`fan_still` key is used when `light_fixes` is missing; `RUGRATS_LIGHTFIXES`). Three parts, all only in db 12:
+
+Hedge leaves part (debug `RUGRATS_HEDGELEAVES=0` = this part off): walking into a backyard hedge spawns leaves (the
+walk's puff `80050b5c` looks up model 0x3f0 with `80044b74`). db 12's model bank has no 0x3f0, and the lookup's
+not-found path returns the bank's first model, small red / green / blue axis markers (game data: PCSX-Redux shows
+the same fragments). Fixed: while the hub runs, its leaf model (a textured 4-vertex quad) and its 16 colours are copied
+(kept in save states); in db 12 the leaf lookup gets that copy at 0x807FF000 (the last 4 KB of the port's 8 MB RAM),
+pointed at db 12's identical leaf palette (0x65dc) with the night tone on its face colours. db 12's VRAM holds the same
+leaf texels. If the hub was not seen yet this run (a state loaded straight into db 12 from an older build) the leaves
+are dropped instead of drawn as markers.
+Separately (all levels, not part of the option): the port spawned one leaf per drawn frame while walking, ~8x the
+PS1's rate at 120 fps; now one per 2 PS1 game frames (`RUGRATS_LEAFRATE=0` = old).
 
 Ceiling fan part (debug `RUGRATS_FANSTILL=0` = this part off, `RUGRATS_FANLOG=1`): Let There Be Light (db 12) is set during a power cut, but the original keeps the kitchen ceiling
 fan turning. The fan is a generic spinning prop: its 1/30 s timer callback `8004e2ac` adds the s16 speeds
