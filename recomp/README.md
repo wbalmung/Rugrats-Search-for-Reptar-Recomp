@@ -892,7 +892,10 @@ format, collision to the released cell format, the texture sheet moved from VRAM
 texture pages that were never on the disc; they show a brick tile from the level's own sheet. Its 24 other objects
 (old object ids) are left out, models and animations come from the Training Level, single-player camera (the per-db
 table `0x80012820` gives db 8 the multiplayer one). A castle / library / stone-tunnel level of 44 rooms; no goal or
-exit, leave with Level Select.
+exit, leave with Level Select. Showcase: the level's own pre-release models (DB08MOD/DB08HIE: four jointed characters
+and 15 single models, n-Space test content) are baked once each into room 38's geometry as extra sub-meshes (rest
+pose, static, no collision, simple baked light; sub-meshes kept within the released limits of ~110 vertices / ~128
+polygons, larger ones blacked out the room). Debug: `RUGRATS_ICMDUMP=<dir>` writes the converted files (private).
 Be Bad (db 19) is restored on the way there (`bebad_restore` in hooks.c: file slots, models and animations from the
 Training Level, db 16, which has Tommy's stair animations; single-player camera; unfinished greybox level, see HANDOFF
 Session log 2026-11-24). Going there

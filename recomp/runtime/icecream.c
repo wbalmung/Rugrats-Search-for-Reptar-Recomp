@@ -26,6 +26,8 @@
    LBAs are the USA disc's (the installer checks its SHA1). */
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
+#include <stdio.h>
 #include "hw.h"
 
 int cd_disc_read(uint32_t lba, uint8_t *out);
@@ -79,13 +81,15 @@ static uint32_t tex_index(const uint8_t e[12]) {
         if (!memcmp(tex.d + 12 * tex_hash[k], e, 12)) return (uint32_t)tex_hash[k];
     }
 }
+static int flat_missing;   /* showcase models: a missing page becomes one flat texel instead of the brick tile */
 static uint16_t clut_new(uint16_t c) { return (uint16_t)((((c >> 6) + 256) << 6) | ((((c & 63) * 16) - 512) >> 4)); }
 /* old texture info (uv0, clut, uv1, tpage, uv2, uv3; uv3 = 0,0 for triangles) -> released entry */
 static uint32_t conv_tex(const uint8_t *o, int quad) {
     uint8_t uv[4][2] = { { o[0], o[1] }, { o[4], o[5] }, { o[8], o[9] }, { 0, 0 } };
     if (quad) { uv[3][0] = o[10]; uv[3][1] = o[11]; }
     uint16_t clut = rd16(o + 2), tp = rd16(o + 6), x = tp & 15, nt;
-    if (!(tp & 0x10) && x >= 8 && x <= 14) nt = (uint16_t)((tp & ~0x1F) | 0x10 | (x - 8));
+    int clut_ok = (clut >> 6) < 256 && (clut & 63) * 16 >= 512;   /* 0xFFFF = no palette (a few model faces) */
+    if (!(tp & 0x10) && x >= 8 && x <= 14 && clut_ok) nt = (uint16_t)((tp & ~0x1F) | 0x10 | (x - 8));
     else {   /* page not on the disc: squeeze the UV rect into the 64x64 brick tile (page 9, u/v 0..63) */
         int n = quad ? 4 : 3, u0 = 255, u1 = 0, v0 = 255, v1 = 0;
         for (int i = 0; i < n; i++) {
@@ -99,6 +103,7 @@ static uint32_t conv_tex(const uint8_t *o, int quad) {
             uv[i][1] = (uint8_t)(v1 == v0 ? 0 : ((uv[i][1] - v0) * 63 + (v1 - v0) / 2) / (v1 - v0));
         }
         nt = (uint16_t)((tp & ~0x1F) | 0x10 | 1); clut = sub_clut; missing++;
+        if (flat_missing) for (int i = 0; i < 4; i++) { uv[i][0] = 20; uv[i][1] = 4; }
     }
     uint8_t e[12];
     uint16_t c2 = clut_new(clut);
@@ -107,10 +112,200 @@ static uint32_t conv_tex(const uint8_t *o, int quad) {
     return tex_index(e);
 }
 
+/* ---- showcase (2026-11-24, user: "one copy of each model in one of the big empty rooms") -----------------------
+   DB08MOD / DB08HIE hold the level's own models in a pre-release format (n-Space test content: 4 jointed characters
+   and 15 single models). The engine can't run those objects, so one copy of each is baked into room SHOW_ROOM's
+   geometry as extra level sub-meshes (rest pose, static, no collision; textures from the converted sheet).
+   DB08MOD: 768 x u32 offsets (0 = none), records from +3072: u32 0, s16 min xyz + 65, s16 max xyz + 64, u32 radius,
+   u16 nverts x2, u32 colour offset, u32 face offset; 6-byte vertices from +36, every ODD vertex stored (z,x,y); face
+   groups {u16 type, u16 count}, ff ends: 0x3c tex quad 20 B, 0x34 tex tri 20, 0x2c / 0x24 same + 4-byte colour (24),
+   0x28 flat quad 12, 0x30 flat tri 8 (flat faces are left out: level polygons always take a texture).
+   DB08HIE: 256 x u32 offsets (skeletons 0, 1, 6, 8), 44-byte header, 40-byte parts {u16, u16 depth (preorder),
+   16 bytes, s32 xyz offset from the parent, u32 model slot}. Models face +z; they are turned to face -z (north door). */
+#define SHOW_ROOM 38
+#define SHOW_MAX 96
+static Buf show[SHOW_MAX];
+static int nshow;
+typedef struct { int16_t x, y, z; float nx, ny, nz; } SVert;
+static SVert sv[256];
+static int snv;
+static Buf sq, stri;              /* 8-byte polygon records of the sub-mesh being filled */
+static uint32_t sqn, strn;
+static int32_t show_org[3];       /* room origin: vertices are room-local */
+static void show_flush(void) {
+    if (!snv) return;
+    if (nshow < SHOW_MAX) {
+        Buf *b = &show[nshow++];
+        int16_t mn[4] = { 32767, 32767, 32767, 0x80 }, mx[4] = { -32768, -32768, -32768, 0 };
+        for (int i = 0; i < snv; i++) {
+            int16_t v[3] = { sv[i].x, sv[i].y, sv[i].z };
+            for (int k = 0; k < 3; k++) { if (v[k] < mn[k]) mn[k] = v[k]; if (v[k] > mx[k]) mx[k] = v[k]; }
+        }
+        put32(b, 0); put(b, mn, 8); put(b, mx, 8); put32(b, (uint32_t)snv); put32(b, 28u + 12u * (uint32_t)snv);
+        const float L[3] = { 0.35f, -0.80f, -0.48f };   /* light from above, front-left (y is down) */
+        for (int i = 0; i < snv; i++) {
+            float n2 = sv[i].nx * sv[i].nx + sv[i].ny * sv[i].ny + sv[i].nz * sv[i].nz, d = 0;
+            if (n2 > 0) {
+                float inv = 1.0f / sqrtf(n2);
+                d = (sv[i].nx * L[0] + sv[i].ny * L[1] + sv[i].nz * L[2]) * inv;
+                if (d < 0) d = -d * 0.35f;   /* faces turned away still get some fill */
+            }
+            uint8_t c = (uint8_t)(58 + 70 * d), v[12];
+            memcpy(v, &sv[i].x, 2); memcpy(v + 2, &sv[i].y, 2); memcpy(v + 4, &sv[i].z, 2);
+            v[6] = v[7] = 0; v[8] = v[9] = v[10] = c; v[11] = 0;
+            put(b, v, 12);
+        }
+        if (sqn) { uint16_t h[2] = { 97, (uint16_t)sqn }; put(b, h, 4); put(b, sq.d, sq.n); }
+        if (strn) { uint16_t h[2] = { 96, (uint16_t)strn }; put(b, h, 4); put(b, stri.d, stri.n); }
+        put32(b, 0x000100FFu);
+    }
+    snv = 0; sq.n = stri.n = 0; sqn = strn = 0;
+}
+static const uint8_t *smod;
+static uint32_t smod_n;
+static const uint8_t *show_rec(uint32_t slot, uint32_t *nv) {
+    uint32_t o = rd32(smod + 4 * slot), p = 3072 + o;
+    if ((!o && slot) || p + 36 > smod_n) return NULL;
+    *nv = rd16(smod + p + 24);
+    return smod + p;
+}
+static void show_vert(const uint8_t *r, uint32_t i, int32_t v[3]) {
+    const uint8_t *q = r + 36 + 6 * i;
+    int16_t a = (int16_t)rd16(q), b = (int16_t)rd16(q + 2), c = (int16_t)rd16(q + 4);
+    if (i & 1) { v[0] = b; v[1] = c; v[2] = a; } else { v[0] = a; v[1] = b; v[2] = c; }
+}
+/* one model at world position pos (model space + pos, turned 180 degrees about y). Sub-meshes stay within what the
+   released levels use (<= 111 vertices, <= 129 polygons; bigger ones blacked out the whole room): a model is split
+   face by face, each sub-mesh getting the vertices its faces use. */
+#define SHOW_NV 110
+#define SHOW_NP 128
+static int16_t remap[256];
+static void show_model(uint32_t slot, const int32_t pos[3]) {
+    uint32_t nv;
+    const uint8_t *r = show_rec(slot, &nv);
+    if (!r || !nv || nv > 256) return;
+    int32_t mv[256][3];
+    for (uint32_t i = 0; i < nv; i++) {
+        int32_t v[3];
+        show_vert(r, i, v);
+        mv[i][0] = pos[0] - v[0] - show_org[0]; mv[i][1] = pos[1] + v[1] - show_org[1]; mv[i][2] = pos[2] - v[2] - show_org[2];
+    }
+    for (uint32_t i = 0; i < 256; i++) remap[i] = -1;
+    static const uint8_t rs[64] = { [0x3c] = 20, [0x34] = 20, [0x2c] = 24, [0x24] = 24, [0x28] = 12, [0x30] = 8 };
+    uint32_t q = rd32(r + 32);
+    for (int g = 0; g < 64; g++) {
+        uint16_t t = rd16(r + q), c = rd16(r + q + 2);
+        if (t == 0xFF || t >= 64 || !rs[t]) break;
+        for (uint32_t j = 0; j < c; j++) {
+            const uint8_t *e = r + q + 4 + rs[t] * j;
+            int quad = t == 0x3c || t == 0x2c, n = quad ? 4 : 3;
+            if (t == 0x28 || t == 0x30) continue;
+            if (e[4] >= nv || e[5] >= nv || e[6] >= nv || (quad && e[7] >= nv)) continue;
+            int need = 0;
+            for (int k = 0; k < n; k++) need += remap[e[4 + k]] < 0;
+            if (snv + need > SHOW_NV || sqn + strn + 1 > SHOW_NP) {
+                show_flush();
+                for (uint32_t i = 0; i < 256; i++) remap[i] = -1;
+            }
+            uint8_t rec[8] = { 0 };
+            for (int k = 0; k < n; k++) {
+                int vi = e[4 + k];
+                if (remap[vi] < 0) {
+                    SVert *s = &sv[snv];
+                    s->x = (int16_t)mv[vi][0]; s->y = (int16_t)mv[vi][1]; s->z = (int16_t)mv[vi][2];
+                    s->nx = s->ny = s->nz = 0;
+                    remap[vi] = (int16_t)snv++;
+                }
+                rec[k] = (uint8_t)remap[vi];
+            }
+            const uint8_t *tx = e + (t == 0x2c || t == 0x24 ? 12 : 8);
+            uint32_t ti = conv_tex(tx, quad);
+            memcpy(rec + 4, &ti, 4);
+            if (quad) { put(&sq, rec, 8); sqn++; } else { put(&stri, rec, 8); strn++; }
+            /* face normal into its vertices (for the baked light) */
+            SVert *A = &sv[rec[0]], *B = &sv[rec[1]], *C = &sv[rec[2]];
+            float ux = B->x - A->x, uy = B->y - A->y, uz = B->z - A->z, wx = C->x - A->x, wy = C->y - A->y, wz = C->z - A->z;
+            float fx = uy * wz - uz * wy, fy = uz * wx - ux * wz, fz = ux * wy - uy * wx;
+            for (int k = 0; k < n; k++) { SVert *s = &sv[rec[k]]; s->nx += fx; s->ny += fy; s->nz += fz; }
+        }
+        q += 4 + rs[t] * c;
+    }
+}
+/* lowest point (largest y) of a model, in model space */
+static int32_t show_bottom(uint32_t slot) {
+    uint32_t nv; int32_t m = -100000;
+    const uint8_t *r = show_rec(slot, &nv);
+    if (!r) return 0;
+    for (uint32_t i = 0; i < nv; i++) { int32_t v[3]; show_vert(r, i, v); if (v[1] > m) m = v[1]; }
+    return m;
+}
+static void show_xext(uint32_t slot, int32_t *lo, int32_t *hi) {
+    uint32_t nv;
+    const uint8_t *r = show_rec(slot, &nv);
+    *lo = *hi = 0;
+    if (!r) return;
+    for (uint32_t i = 0; i < nv; i++) { int32_t v[3]; show_vert(r, i, v); if (-v[0] < *lo) *lo = -v[0]; if (-v[0] > *hi) *hi = -v[0]; }
+}
+static void build_showcase(const uint8_t *mod, uint32_t modn, const uint8_t *hie, uint32_t hien, const uint8_t *room_hdr) {
+    smod = mod; smod_n = modn; nshow = 0; flat_missing = 1;
+    for (int k = 0; k < 3; k++) show_org[k] = (int32_t)rd32(room_hdr + 4 * k);
+    const int32_t floor_y = (int32_t)rd32(room_hdr + 36) + 1;   /* room max y = its floor */
+    uint8_t used[768] = { 0 };
+    /* back row: the jointed characters, origin on the floor (the brain alien keeps its hover height) */
+    static const int32_t char_x[4] = { -29300, -27100, -24900, -22700 };
+    int nc = 0;
+    for (uint32_t sk = 0; sk < 256 && nc < 4; sk++) {
+        uint32_t o = rd32(hie + 4 * sk);
+        if (!o || o + 44 > hien) continue;
+        uint32_t parts = rd16(hie + o), hdr = 44;
+        if (o + hdr + 40 * parts > hien || parts > 32) continue;
+        int32_t stack[8][3], pos[3];
+        for (uint32_t j = 0; j < parts; j++) {
+            const uint8_t *pr = hie + o + hdr + 40 * j;
+            uint32_t depth = rd16(pr + 2), slot = rd32(pr + 36);
+            if (depth < 1 || depth > 8 || slot >= 768) break;
+            for (int k = 0; k < 3; k++) {
+                int32_t off = (int32_t)rd32(pr + 20 + 4 * k);
+                stack[depth - 1][k] = (depth > 1 ? stack[depth - 2][k] : 0) + off;
+            }
+            /* turned 180: x and z of the part offset flip with the model (show_model negates model x/z) */
+            pos[0] = char_x[nc] - stack[depth - 1][0]; pos[1] = floor_y + stack[depth - 1][1];
+            pos[2] = -4300 - stack[depth - 1][2];
+            show_model(slot, pos);
+            used[slot] = 1;
+        }
+        show_flush();
+        nc++;
+    }
+    /* front row: every model no skeleton uses (0 = the exporter's axes helper: left out), set on the floor */
+    uint32_t list[64], nl = 0;
+    int32_t width = 0;
+    for (uint32_t s = 1; s < 768 && nl < 64; s++) {
+        uint32_t o = rd32(mod + 4 * s), dup = 0;
+        if (!o || used[s]) continue;
+        for (uint32_t k = 1; k < s; k++) if (rd32(mod + 4 * k) == o) dup = 1;   /* same record listed twice */
+        if (dup) continue;
+        int32_t lo, hi; show_xext(s, &lo, &hi);
+        width += hi - lo + 250;
+        list[nl++] = s;
+    }
+    int32_t x = -26100 - width / 2;
+    for (uint32_t k = 0; k < nl; k++) {
+        int32_t lo, hi; show_xext(list[k], &lo, &hi);
+        int32_t pos[3] = { x - lo + 125, floor_y - show_bottom(list[k]), -7000 };
+        show_model(list[k], pos);
+        x += hi - lo + 250;
+    }
+    show_flush();
+    free(sq.d); free(stri.d); sq.d = stri.d = NULL; sq.cap = stri.cap = 0;
+    flat_missing = 0;
+    rt_logf("icecream: showcase in room %d: %d characters, %u single models, %d sub-meshes\n", SHOW_ROOM, nc, nl, nshow);
+}
+
 #define NEED(c) do { if (!(c)) { rt_logf("icecream: unexpected data (%s, line %d)\n", #c, __LINE__); goto fail; } } while (0)
 
 static int build(void) {
-    uint8_t *src[V_N] = { 0 };
+    uint8_t *src[V_N] = { 0 }, *mod = NULL, *hie = NULL;
     uint32_t *cnt = NULL;
     Buf lv = { 0 }, cl = { 0 }, lp = { 0 };
     memset(&tex, 0, sizeof tex); tex_n = 0; missing = 0;
@@ -118,6 +313,10 @@ static int build(void) {
     for (int i = 0; i < V_N; i++) {
         src[i] = disc_file(old_lba[i], old_size[i], vf[i].sub);
         NEED(src[i]);
+    }
+    {   uint8_t sub[4];   /* DB08MOD.BIN, DB08HIE.BIN: the level's own models, for the showcase */
+        mod = disc_file(119313, 69064, sub); hie = disc_file(119310, 3760, sub);
+        NEED(mod && hie);
     }
     NEED(tex_hash);
     memset(tex_hash, 0xFF, 8192 * sizeof *tex_hash);
@@ -157,6 +356,8 @@ static int build(void) {
     }
     for (uint32_t c = 1; c < 65536; c++) if (cnt[c] > cnt[sub_clut]) sub_clut = (uint16_t)c;
 
+    build_showcase(mod, 69064, hie, 3760, L + 8 + SHOW_ROOM * 1000);
+
     /* ---- level ---- */
     put32(&lv, 0);
     uint32_t np = 0;
@@ -190,8 +391,9 @@ static int build(void) {
         const uint8_t *b = L + boff[i];
         uint32_t ns = rd32(b), p = 4 + 4 * ns;
         size_t start = lv.n, tab = lv.n + 4;
-        put32(&lv, ns);
-        for (uint32_t k = 0; k < ns; k++) put32(&lv, 0);
+        uint32_t extra = i == SHOW_ROOM ? (uint32_t)nshow : 0;
+        put32(&lv, ns + extra);
+        for (uint32_t k = 0; k < ns + extra; k++) put32(&lv, 0);
         for (uint32_t k = 0; k < ns; k++) {
             const uint8_t *s = b + p;
             uint32_t ss = rd32(b + 4 + 4 * k), q = rd32(s + 24);
@@ -219,6 +421,11 @@ static int build(void) {
             }
             uint32_t sl = (uint32_t)(lv.n - sstart);
             memcpy(lv.d + tab + 4 * k, &sl, 4);
+        }
+        for (uint32_t k = 0; k < extra; k++) {
+            uint32_t sl = (uint32_t)show[k].n;
+            memcpy(lv.d + tab + 4 * (ns + k), &sl, 4);
+            put(&lv, show[k].d, show[k].n);
         }
         uint32_t bl = (uint32_t)(lv.n - start);
         memcpy(lv.d + sizes_at + 4 * i, &bl, 4);
@@ -302,14 +509,27 @@ static int build(void) {
         vf[i].nsect = (vf[i].n + 2047) / 2048;
         at += (vf[i].nsect + 15) & ~15u;
     }
+    {   /* debug: RUGRATS_ICMDUMP=<dir> writes the converted files there (private checks; never share them) */
+        const char *e = getenv("RUGRATS_ICMDUMP");
+        static const char *nm[V_N] = { "LEVEL08.BIN", "LEVEL08.COL", "DB08A.RAW", "DB08LP.BIN" };
+        for (int i = 0; e && i < V_N; i++) {
+            char path[600];
+            snprintf(path, sizeof path, "%s/%s", e, nm[i]);
+            FILE *f = fopen(path, "wb");
+            if (f) { fwrite(vf[i].d, 1, vf[i].n, f); fclose(f); }
+        }
+    }
     rt_logf("icecream: converted from the disc: level %u bytes (%u rooms, %u portals, %u texture entries, %u polygons "
             "on the stand-in tile), collision %u, objects %u, textures %u\n", vf[V_LEVEL].n, n, np, tex_n, missing,
             vf[V_COL].n, vf[V_LP].n, vf[V_RAW].n);
     for (int i = 0; i < V_N; i++) free(src[i]);
-    free(cnt); free(tex.d); free(tex_hash);
+    for (int k = 0; k < nshow; k++) free(show[k].d);
+    free(mod); free(hie); free(cnt); free(tex.d); free(tex_hash);
     return 1;
 fail:
     for (int i = 0; i < V_N; i++) free(src[i]);
+    for (int k = 0; k < nshow; k++) free(show[k].d);
+    free(mod); free(hie);
     free(cnt); free(tex.d); free(tex_hash); free(lv.d); free(cl.d); free(lp.d);
     return 0;
 }
