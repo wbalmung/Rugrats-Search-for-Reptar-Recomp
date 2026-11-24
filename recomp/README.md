@@ -989,9 +989,12 @@ TV's calls only. Debug: `RUGRATS_TVFORCE=1` (unlocked without the pieces), `RUGR
 loop with next db -1. For db -1 the main loop wipes the progress block inline (`80018264..800182ac`: flags incl. 0x200
 "game beaten", puzzle pieces earned / placed, Reptar bars taken / spent), plays the credits, and goes through the title
 front end `80030158(-1)` (which, without a memory-card load, also runs the new-game reset `80094cfc` -> `80091a44`).
-Enhanced copies the block (+0x34..+0x147 and the 0x200 flag) at the level exit (hook `8006ee14`, only when the credits
+Enhanced copies the block (+0x34..+0x147 and the flag word +0x30 except 0x400) at the level exit (hook `8006ee14`, only when the credits
 byte is set), puts it back right after the wipe (hook `8008a7ec` from ra `800182b8`) and skips the title's new-game reset
-once. Quitting to the title and a later New Game still reset as before.
+once. Quitting to the title and a later New Game still reset as before. Flag 0x10 opens the hub entrances to db 3, 4
+and 6 (`8004f78c`, else hint 0x2c8 "you'll need more puzzle pieces"); the level-complete handler `80076d6c` sets it
+when db 15 is finished. Saves from the first version of this part (it kept only 0x200) lost it: with Enhanced, a beaten
+game (0x200) with all 12 pieces earned gets 0x10 back at each level start and on Triangle at an entrance.
 
 (2) Final level unlocked: the "You did it!" screen is followed by a second
 screen, "Final level unlocked!" (yellow) / "Go see what's on TV!" (pink); X returns to the level. How: hook on the

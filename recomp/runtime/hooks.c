@@ -3730,6 +3730,7 @@ int rt_hook_800631d8(void) {
     return 1;
 }
 int rt_hook_8004f78c(void) {
+    { void hooks_beaten_doors(void); hooks_beaten_doors(); }   /* "Keep progress after the credits": flag 0x10 */
     if (!entlog_on()) return 0;
     uint32_t o = cpu.r[4];
     rt_logf("ent: entrance handler obj %08x model %d db %d sub %d ra %08x\n", o, mem_r16(o + 150), mem_r8(o + 108),
@@ -4906,21 +4907,22 @@ int rt_hook_80091d50(void) {
    that starts a game without a memory-card load (0x800E3CA0 == 0) it also calls 80094cfc -> 80091a44 (new-game reset
    of +0x40..+0x147). The player lands in the hub with no pieces and no bars.
    Enhanced: at the level exit (hook 8006ee14, ra 80018210, next db -1 with the credits byte set) +0x34..+0x147 and the
-   0x200 flag are copied; right after the inline wipe (8008a7ec called from ra 800182b8) they are put back; the
-   80094cfc reset that may follow on the title is skipped once (cleared when any level starts). Only the ending path:
+   flag word +0x30 (all but 0x400; the first version kept only 0x200 and lost 0x10 = Medium/Hard entrances open) are
+   copied; right after the inline wipe (8008a7ec called from ra 800182b8) they are put back; the 80094cfc reset that may follow on the title is skipped once (cleared when any level starts). Only the ending path:
    quitting to the title (no credits byte) and a later New Game still reset. */
 #define KP_BASE 0x800C5678u
 #define KP_FROM 0x34u
 #define KP_TO   0x148u
 static uint8_t kp_buf[KP_TO - KP_FROM];
 static uint32_t kp_flags;
+#define KP_FLAGS_NOT 0x400u   /* flag word bits not kept: 0x400 = pending piece award, read by the main loop right after */
 static int kp_have, kp_title;
 void hooks_keep_progress_snap(void) {
     kp_have = kp_title = 0;
     if (!mem_r8(0x800C3E80u)) return;                          /* not the ending (quit to title etc.) */
     if (!opt.final_level) { rt_logf("progress: ending, reset as original (Final Level Behavior = Default)\n"); return; }
     for (uint32_t i = 0; i < sizeof kp_buf; i++) kp_buf[i] = mem_r8(KP_BASE + KP_FROM + i);
-    kp_flags = mem_r32(KP_BASE + 0x30u) & 0x200u;
+    kp_flags = mem_r32(KP_BASE + 0x30u) & ~KP_FLAGS_NOT;
     kp_have = 1;
     rt_logf("progress: ending, keeping pieces %d / bars %d (Final Level Behavior = Enhanced)\n", hooks_dbg_pieces(),
             hooks_dbg_bars());
@@ -4941,7 +4943,20 @@ int rt_hook_80094cfc(void) {                                    /* title new-gam
             hooks_dbg_bars());
     return 1;
 }
-void hooks_keep_progress_level(void) { kp_title = 0; }
+void hooks_beaten_doors(void);
+void hooks_keep_progress_level(void) { kp_title = 0; hooks_beaten_doors(); }
+void hooks_beaten_doors(void) {   /* at each level start and on Triangle at an entrance (8004f78c) */
+    /* Repair (2026-11-23, user: hub Toy Palace says "need more puzzle pieces" with all 12): flag 0x10 opens the hub
+       entrances to db 3, 4 and 6 (8004f78c, else hint 0x2c8). The level-complete handler 80076d6c sets it when db 15 is
+       finished; the ending's wipe clears it. Before the full flag word was kept, an Enhanced ending kept the pieces but
+       lost 0x10, so those doors stayed shut. A beaten game (0x200) has had 0x10, so with all 12 pieces earned (= kept
+       progress; a beaten file reset the original way has none) it is set again here. */
+    const uint32_t f = mem_r32(KP_BASE + 0x30u);
+    if (opt.final_level && (f & 0x200u) && !(f & 0x10u) && hooks_dbg_pieces() == 12) {
+        mem_w32(KP_BASE + 0x30u, f | 0x10u);
+        rt_logf("progress: game beaten but Medium/Hard entrances shut (flags %x): opened (Final Level Behavior = Enhanced)\n", f);
+    }
+}
 
 /* ---- Hedge leaves in Let There Be Light (part of opt.light_fixes, 2026-11-23, user) ------------------------------
    Walking into a backyard hedge spawns leaf particles: 80050b5c looks up model 0x3f0 (80044b74, ra 80050b80) and spawns
