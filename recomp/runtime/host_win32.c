@@ -1600,9 +1600,12 @@ static const struct { int db; const char *name; } lvl_list[] = {
     { 8, "Ice Cream Mountain (cut level)" }, { 9, "The Mysterious Mr. Friend" },
     { 10, "Chuckie's Glasses" }, { 11, "Circus Angelicus" }, { 12, "Let There Be Light" }, { 13, "Cookie Race" },
     { 14, "The Return of Mr. Friend" }, { 15, "Mirrorland" }, { 16, "Training Level" }, { 17, "Gold Rush" },
-    { 18, "Egg Hunt" }, { 19, "Be Bad (cut level)" }, { 20, "No More Cookies" }, { 21, "Touchdown Tommy" }, { 23, "Golf: hole 1" },
-    { 24, "Golf: hole 2" }, { 25, "Golf: hole 3" }, { 26, "Golf: hole 4" }, { 27, "Golf: hole 5" },
-    { 28, "Golf: hole 6" }, { 29, "Golf: hole 7" }, { 30, "Golf: hole 8" }, { 31, "Golf: hole 9" },
+    { 18, "Egg Hunt" }, { 19, "Be Bad (cut level)" }, { 20, "No More Cookies" }, { 21, "Touchdown Tommy" },
+    /* golf dbs are not in hole order: hole = the game's own index (80057d50, also hooks.c golf_idx) + 1; the par
+       table 0x800B7FFC read with it matches each hole's HUD. The name table's "Hole One".."Nine" is just db order. */
+    { 23, "Golf: hole 5" }, { 24, "Golf: hole 3" }, { 25, "Golf: hole 1" }, { 26, "Golf: hole 7" },
+    { 27, "Golf: hole 9" }, { 28, "Golf: hole 2" }, { 29, "Golf: hole 4" }, { 30, "Golf: hole 6" },
+    { 31, "Golf: hole 8" },
 };
 #define LVL_N ((int)(sizeof lvl_list / sizeof lvl_list[0]))
 #define LVL_VIS 12                           /* rows shown at once */

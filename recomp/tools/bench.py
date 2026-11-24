@@ -34,7 +34,8 @@ NAMES = ["Menus", "Pickles' Home (hub)", "Grandpa's Teeth", "Incident on Aisle 7
          "Visitors from Outer Space", "Toy Palace", "Reptar 2010", "Ice Cream Mountain", "The Mysterious Mr. Friend",
          "Chuckie's Glasses", "Circus Angelicus", "Let There Be Light", "Cookie Race", "The Return of Mr. Friend",
          "Mirrorland", "Training Level", "Gold Rush", "Egg Hunt", "Be Bad", "No More Cookies", "Touchdown Tommy",
-         "Multiplayer Golf"] + [f"Golf hole {i}" for i in range(1, 10)]
+         "Multiplayer Golf"] + [f"Golf hole {i}" for i in (5, 3, 1, 7, 9, 2, 4, 6, 8)]  # db 23..31: game hole index
+                                                                                           # (80057d50) + 1
 # databases the released game cannot play from the hub (found 2026-11-06, see README "Per-level performance test"):
 #  0 Menus: no gameplay loop; 8 Ice Cream Mountain: LEVEL08.BIN uses an older 32-bit layout the engine can't parse
 #  (it reads past RAM and draws nothing); 19 Be Bad: its level file (file id 453) is not on the disc;

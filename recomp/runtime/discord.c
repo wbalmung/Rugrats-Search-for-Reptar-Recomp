@@ -30,7 +30,10 @@ static int nonce;
 static void level_text(int db, char *out, int n) {
     if (db <= 0) snprintf(out, n, "In the menus");
     else if (db < (int)(sizeof lv_names / sizeof lv_names[0])) snprintf(out, n, "%s", lv_names[db]);
-    else if (db <= 31) snprintf(out, n, "Golf: hole %d", db - 22);
+    else if (db <= 31) {   /* golf dbs 23..31 are not in hole order: the game's hole index (80057d50) + 1 */
+        static const char hole[9] = { 5, 3, 1, 7, 9, 2, 4, 6, 8 };
+        snprintf(out, n, "Golf: hole %d", hole[db - 23]);
+    }
     else snprintf(out, n, "Level %d", db);
 }
 
