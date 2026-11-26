@@ -3702,6 +3702,33 @@ int rt_hook_8008da4c(void) {
     return 0;                                            /* the original plays the swapped id */
 }
 
+/* Gold Rush's own voice bank (user 2026-11-26: in Gold Rush only Tommy's unused hub lines played). The voice bank
+   loader 8008d8e8(db) reads file 0x249+db (SPEECHTB) and 0x269+db (ISF) through the file index table 0x800B2C40
+   ({LBA, size} per file id), and the shipped table gives db 17 the HUB's files (DB01/SPEECHTB.DAT 116333, DB01.ISF
+   175162), like db 14. DATA/DB17/SPEECHTB.DAT + DB17.ISF (33 clips) are on the disc but never load, so every Gold
+   Rush line (id lists 0x800B94A0..0x800B9508 / 0x800B96D8, timer lines 859 / 986 in 8007f5a8) misses the lookup and is
+   dropped; only 2041-2046 (in both tables) played, and Restored Lines swapped the hub's 29 196 200 225 into Gold
+   Rush's chatter. Its chatter 800813a0 asks for ids 0..4 (only 4 is in DB01), and its triggers only for ids < 5 (SFX)
+   (RAM scan 2026-11-26). Here: when db 17's bank loads, point its two slots at DB17's own files. Only if the slots
+   hold the known hub values (USA disc). RUGRATS_GOLDRUSHVOX=0 = original. */
+int rt_hook_8008d8e8(void) {
+    static int on = -1;
+    if (on < 0) { const char *e = getenv("RUGRATS_GOLDRUSHVOX"); on = !e || atoi(e) != 0; }
+    if (!on || cpu.r[4] != 17) return 0;
+    static const uint32_t slot[2][5] = {   /* file id, hub LBA, hub size, own LBA, own size */
+        { 0x249 + 17, 116333, 208, 123006, 204 },          /* DB17/SPEECHTB.DAT */
+        { 0x269 + 17, 175162, 5830656, 227906, 6438912 },  /* SOUND/XA/DB17.ISF */
+    };
+    for (int i = 0; i < 2; i++) {
+        const uint32_t a = 0x800B2C40u + slot[i][0] * 8;
+        if (mem_r32(a) == slot[i][1] && mem_r32(a + 4) == slot[i][2]) {
+            mem_w32(a, slot[i][3]); mem_w32(a + 4, slot[i][4]);
+            rt_logf("vox: Gold Rush voice bank file %u -> own (lba %u)\n", slot[i][0], slot[i][3]);
+        }
+    }
+    return 0;
+}
+
 /* ---- Golf Reactions (opt.voice_golf, user 2026-11-18; HANDOFF has the trace) ------------------------------------
    Golf holes are db 23..31 (all use Ice Cream Mountain's DB08 voice bank). Golf character = player obj +0x15c:
    1 Tommy, 2 Chuckie, 3 Angelica, 4 Lil, 5 Phil. Hole index = 80057d50(db) (table below), par = byte 0x800B7FFC[idx],

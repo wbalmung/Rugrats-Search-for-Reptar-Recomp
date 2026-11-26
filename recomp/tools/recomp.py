@@ -60,6 +60,7 @@ HOOKS = {
     0x8002b660: "room holding a point (eye*, hint room): Debug Freecam never gets -1 from the camera update (no eye clamp)",
     0x800818e0: "per-level idle voice line (chatter) timer, gp+0xe40: chatter option stretches / stops it",
     0x8008da4c: "play XA voice line (a0 = id): Restored Lines swaps idle chatter picks for never-used lines",
+    0x8008d8e8: "load a level's voice bank (a0 = db): Gold Rush gets its own DB17 bank (the file table gives it the hub's)",
     0x8007a9d8: "golf hole finished (a0 = player): Golf Reactions plays the score / fail line first, then runs it",
     0x8005fcb8: "golf stroke counted at ball launch (a0 = player): Golf Reactions arms a ball-rolling line",
     0x8007db6c: "Circus trike on the target (queues event 57, called every frame): Restored Lines holds it for Phil's line 762",

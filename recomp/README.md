@@ -845,6 +845,13 @@ Chatter Frequency (Enhancements page, ini `[audio] chatter`: 0 Original, 1 Less 
 timer `gp+0xe40` in 1/300 s of real time, reset to 6.0..19.6 s, some levels 0..6.8 s). Less often / Rarely stretch
 each new gap x2 / x4, Off keeps the timer from running out. Cutscene and event lines are played from other code.
 
+Gold Rush voice bank (always on; `RUGRATS_GOLDRUSHVOX=0` = original): the shipped file index table (0x800B2C40)
+gives Gold Rush (db 17) the hub's voice files (DB01 SPEECHTB + ISF), so none of its own 27 lines ever played (only
+2041-2046, which both tables hold) and Restored Lines picked the hub's unused Tommy lines there. A pre-hook on the
+bank loader `8008d8e8` points db 17's two slots (file ids 0x249+17, 0x269+17) at `DATA/DB17/SPEECHTB.DAT` and
+`DB17.ISF` (only while they hold the known hub values). Its chatter `800813a0` asks for ids 0..4 (no clips), so its
+idle lines come from Restored Lines; its timer and scripted lines play from the EXE id lists.
+
 Restored Lines (Enhancements page, ini `[audio] voice_restore`, default 1 = On; `RUGRATS_RESTORE`): voice lines that
 are on the disc but that the game never requests. Each level's `DATA/DBxx/SPEECHTB.DAT` maps line ids to clips in
 `DATA/SOUND/XA/DBxx.ISF` (every clip on the disc has an entry). 116 ids (133 entries, ~5.7 min) are requested by no
