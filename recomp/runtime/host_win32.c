@@ -1425,7 +1425,8 @@ static MenuItem menu_items[] = {
       "colours get night colours; hedges shed leaves instead of stray markers. Original: as on the disc.", T_ENH },
     { "Hub World Enhancements", MI_CHOICE, &opt.hub_world, v_bool, 2, off_on, NULL, NULL, "game", "hub_world", NULL,
       "On: the family room and the garage behind the house's two closed doors can be explored (rooms and furniture "
-      "from Chuckie's Glasses, read from your disc). Applies the next time the house loads. Off: original.", T_ENH },
+      "from Chuckie's Glasses, read from your disc), and Grandpa sleeps in the living-room armchair as in the opening "
+      "cinematic. Applies the next time the house loads. Off: original.", T_ENH },
     { "Egg Hunt Toys", MI_CHOICE, &opt.egg_toys, v_bool, 2, off_on, NULL, NULL, "game", "egg_toys", NULL,
       "On: in Egg Hunt the living-room toys that can be picked up and thrown in the house (ball, guitar and the "
       "others) can be picked up and thrown there too. Applies the next time Egg Hunt starts. Off: original.", T_ENH },

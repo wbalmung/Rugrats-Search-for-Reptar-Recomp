@@ -1033,6 +1033,19 @@ almost no memory left, so it gets a 12 KB bigger object pool and a 512 KB heap e
 (kept in save states). Applies the next time the house loads; Off gives the original files. Debug:
 `RUGRATS_HUBLOG=1`, `RUGRATS_HUBDUMP=<dir>` (writes the merged files: game data, never share them). Also new:
 the game's debug pause box (`8001d480`, e.g. "MemAlloc() failed") now writes its text to `rugrats.log`.
+Grandpa asleep (same option, `RUGRATS_GRANDPA=0/1` overrides it; hooks.c `hooks_grandpa_frame`): the opening
+cinematic shows Grandpa asleep in the living room's green armchair. He is in the house as character id 0xd too, but
+parked out of sight. In house gameplay he is put in the chair at the cinematic's spot each game frame and plays its
+sleeping animation: the 169 poses (16 bone quaternions each) are read once from `OPEN.BIN` on the player's disc and
+played at the cinematic's 30 poses/s forwards then backwards, blended between poses. Placement is what the cutscene
+player does (position, `8004a218` into the room list, bones into the skeleton, `8002b240`); not while a streamed
+cutscene runs. His eyes are shut too: character eye strips are TIMs on the disc (`DATA/MENU/TIMS/xxEYES.TIM`, frames
+open / shut / half) and a per-level mask (table `0x800B91A0`, loader `80074b9c`) says which ones a level loads; the
+house leaves out Grandpa's (`GREYES.TIM`, bit 0x40), so its VRAM only has the open eyes. With the option on, the
+house's mask gets that bit (the game loads and frees the 1.6 KB strip itself) and the shut frame is uploaded through
+the game's `80075304(13, 1)` once per visit; a streamed cutscene puts the open frame back. A save state made in the
+house by an older build has no strip: the eyes stay open until the house loads again. Debug: `RUGRATS_GRANDPALOG=1`; `RUGRATS_OBJLIST=<vblank>[,...]` (one value < 100 = every n*100
+vblanks) logs every object in the room lists and the id table cutscenes use.
 
 Disable Stage Timers (Enhancements page, ini `[game] no_timers`: 0 Off = default = original, 1 On;
 `RUGRATS_NOTIMERS`). The game has one stage clock (gp+0x5b0, 1/300 s ticks, counted down by `8007f5a8`); when it

@@ -580,6 +580,7 @@ static int want(void) {
     if (env == -2) { const char *e = getenv("RUGRATS_HUBWORLD"); env = e ? atoi(e) != 0 : -1; }
     return env >= 0 ? env : opt.hub_world;
 }
+int hubrooms_on(void) { return want(); }   /* hooks.c: sleeping Grandpa is part of the same option */
 static uint32_t orig[F_N][2];
 static int orig_ok[F_N];
 static void apply(void) {

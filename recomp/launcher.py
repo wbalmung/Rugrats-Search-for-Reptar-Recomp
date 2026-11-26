@@ -219,7 +219,8 @@ SETTINGS = [
      "their daytime colours get night colours. Original: as on the disc."),
     ("Enhancements", "Hub World Enhancements", "game", "hub_world", 1, BOOL, OFF_ON,
      "On: the family room and the garage behind the house's two closed doors can be explored (rooms and furniture "
-     "from Chuckie's Glasses, read from your disc). Applies when the house loads."),
+     "from Chuckie's Glasses, read from your disc), and Grandpa sleeps in the living-room armchair as in the opening "
+     "cinematic. Applies when the house loads."),
     ("Enhancements", "Egg Hunt Toys", "game", "egg_toys", 1, BOOL, OFF_ON,
      "On: in Egg Hunt the living-room toys that can be picked up and thrown in the house can be picked up there too."),
     ("Enhancements", "Disable Stage Timers", "game", "no_timers", 0, BOOL, OFF_ON,

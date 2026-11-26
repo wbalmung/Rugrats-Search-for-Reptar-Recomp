@@ -1125,7 +1125,47 @@ static void bebad_restore(void) {
             mod_db, anim_db);
 }
 
+/* Debug: RUGRATS_OBJLIST=<vblank>[,<vblank>...] (one value < 100: every n*100 vblanks) logs every object in the room lists (props +0x48, characters +0x4c)
+   at those vblanks: address, list, room, id obj+150, flags, type obj+0xa6, position, skeleton obj+0x154. */
+static void objlist_dump(void) {
+    static int init; static uint32_t at[16]; static int n;
+    if (!init) {
+        init = 1;
+        const char *e = getenv("RUGRATS_OBJLIST");
+        while (e && *e && n < 16) { at[n++] = (uint32_t)strtoul(e, (char **)&e, 10); if (*e == ',') e++; else break; }
+    }
+    int hit = 0;
+    for (int i = 0; i < n; i++) if (at[i] == hooks_frame()) hit = 1;
+    if (n == 1 && at[0] < 100 && at[0] && hooks_frame() % (at[0] * 100u) == 0) hit = 1;   /* < 100: every n*100 */
+    if (!hit) return;
+    const uint32_t tbl = mem_r32(0x800C4A8Cu);
+    const int nrooms = (int)mem_r32(0x800C4A9Cu);
+    rt_logf("objlist vblank %u db %d rooms %d tbl %08x\n", hooks_frame(), (int)mem_r32(0x800C5678u), nrooms, tbl);
+    {   /* the id -> object table 800461f4 searches (cutscene record ids): u16 ids gp+0x2bc, objects gp+0x2c0 */
+        const int nid = (int16_t)mem_r16(0x800C3E80u + 0x2c4);
+        const uint32_t ids = mem_r32(0x800C3E80u + 0x2bc), objs = mem_r32(0x800C3E80u + 0x2c0);
+        for (int i = 0; i < nid && i < 4096; i++) {
+            const uint32_t o = mem_r32(objs + (uint32_t)i * 4);
+            rt_logf("objlist T id %4x obj %08x lp %4x type %u pos %d %d %d skel %08x\n", mem_r16(ids + (uint32_t)i * 2), o,
+                    o ? mem_r16(o + 150) : 0, o ? mem_r8(o + 0xa6) : 0, o ? (int)mem_r32(o + 0x18) : 0,
+                    o ? (int)mem_r32(o + 0x1c) : 0, o ? (int)mem_r32(o + 0x20) : 0, o ? mem_r32(o + 0x154) : 0);
+        }
+    }
+    if (!tbl || nrooms <= 0 || nrooms > 128) return;
+    for (int i = 0; i < nrooms; i++)
+        for (int l = 0; l < 2; l++) {
+            int g = 0;
+            for (uint32_t nd = mem_r32(tbl + (uint32_t)i * 0x70 + 0x48 + l * 4); nd && g < 512; nd = mem_r32(nd + 4), g++) {
+                const uint32_t o = mem_r32(nd + 8);
+                if (!o) continue;
+                rt_logf("objlist %c room %2d obj %08x id %4x flags %08x type %u pos %d %d %d skel %08x +84 %08x\n",
+                        l ? 'C' : 'P', i, o, mem_r16(o + 150), mem_r32(o), mem_r8(o + 0xa6), (int)mem_r32(o + 0x18),
+                        (int)mem_r32(o + 0x1c), (int)mem_r32(o + 0x20), mem_r32(o + 0x154), mem_r32(o + 84));
+            }
+        }
+}
 void hooks_level_vblank(void) {
+    objlist_dump();
     if (!level_exit_at || hooks_frame() < level_exit_at) return;
     level_exit_at = 0;
     if (level_want == 19) bebad_restore();
@@ -1229,6 +1269,8 @@ void hooks_state(StateIO *s) {
     void hooks_egg_state(StateIO *s);
     st_prefix(s, "hooks");
     hooks_egg_state(s);
+    void hooks_grandpa_state(StateIO *s);
+    hooks_grandpa_state(s);
     if (st_loading(s)) { void hooks_dmg_reset(void); hooks_dmg_reset(); }
 }
 
@@ -2655,6 +2697,7 @@ int rt_hook_80072d38(void) {
 int rt_hook_80072bf0(void) {
     if (!lbl_inside) tv_frame();      /* TV to Final Level: once per game frame, before the timers fire */
     if (!lbl_inside) egg_toys_frame();   /* Egg Hunt Toys */
+    if (!lbl_inside) { void hooks_grandpa_frame(void); hooks_grandpa_frame(); }   /* Hub World Enhancements: Grandpa asleep */
     if (!lbl_inside) { void hooks_night_frame(void); hooks_night_frame(); void hooks_leaf_frame(void); hooks_leaf_frame(); }   /* "Let There Be Light" Fixes (furniture) */
     if (lbl_inside || !opt.fixed_timestep) return 0;
     lbl_inside = 1;
@@ -4344,6 +4387,149 @@ static uint32_t gcall(uint32_t fn_ra, void (*fn)(void), uint32_t a0, uint32_t a1
 }
 void f_80073b08(void); void f_800461f4(void); void f_8001f88c(void); void f_8001f9fc(void); void f_8004a34c(void);
 void f_8004a218(void); void f_8002b240(void); void f_80019c88(void);
+/* ---- Sleeping Grandpa (part of Hub World Enhancements, 2026-11-26, user) -------------------------------------------
+   The opening cinematic (OPEN.BIN, before the title) shows Grandpa asleep in the living room's green armchair. He is
+   character record id 0xd there (LP 5, 16 bones), at 8652,-70,13155 for packets 1..169 (then moved below the floor).
+   In the hub the same object (id 0xd via 800461f4) exists but is parked out of sight (room 0). With the option on,
+   in db 1 gameplay he is put back in the chair each game frame with the cinematic's own sleeping animation: the
+   169 poses are read once from the player's disc (OPEN.BIN at LBA 26: one packet per data sector, header 0x18 B,
+   object records 0x18 B, character records 0x10 B + 8 B per bone, see "Smooth cutscenes" below), played at the
+   cinematic's 30 poses/s forwards then backwards (no pop at the loop), blended between poses (q_blend). Placement is
+   what the cutscene player does: Euler obj+0x24 = 0, position obj+0x18, 8004a218 (re-files it in the room for that
+   position), bone quaternions into the skeleton obj+0x154, 8002b240 builds the bone matrices. Not while a streamed
+   cutscene runs (hub cutscenes place him themselves). RUGRATS_GRANDPA=0/1 overrides; RUGRATS_GRANDPALOG=1 logs. */
+#define GPA_MAXF 256
+#define GPA_MAXB 24
+#define GPA_ID 0xd
+static int gpa_ok, gpa_nf, gpa_nb, gpa_lg = -1;
+static int32_t gpa_pos[3];
+static uint8_t gpa_bi[GPA_MAXB];
+static int16_t gpa_q[GPA_MAXF][GPA_MAXB][4];
+static uint32_t gpa_ticks;                 /* game ticks (1/300 s) he has been asleep in the chair (saved in states) */
+int cd_disc_read(uint32_t lba, uint8_t *out);
+int hubrooms_on(void);
+static int gpa_load(void) {
+    if (gpa_ok) return gpa_ok > 0;
+    gpa_ok = -1;
+    static uint8_t sec[2352];
+    if (!cd_disc_read(26, sec) || cutp_r32(sec + 24, 0) != 0xF00DBABEu) { rt_logf("grandpa: OPEN.BIN header not found\n"); return 0; }
+    for (uint32_t lba = 27; lba < 26 + 7071 && gpa_nf < GPA_MAXF; lba++) {
+        if (!cd_disc_read(lba, sec)) break;
+        if (sec[18] != 0x08) continue;                         /* data sectors only (XA audio / padding: not 0x08) */
+        const uint8_t *p = sec + 24;
+        const uint32_t w0 = cutp_r32(p, 0);
+        if (!w0 || w0 == 0xDDDDDDDDu || (int)(w0 & 0xFFFF) != gpa_nf + 1) continue;
+        const uint32_t no = cutp_r32(p, 0x10) >> 26, nc = cutp_r32(p, 0x14) >> 26;
+        uint32_t o = 0x18 + no * 0x18;
+        int found = 0;
+        for (uint32_t i = 0; i < nc && o + 0x10 <= 2048; i++) {
+            const uint32_t nb = p[o + 0xe];
+            if (o + 0x10 + nb * 8 > 2048) break;
+            if ((cutp_r32(p, o + 0xc) & 0xFFFF) == GPA_ID) {
+                int32_t pos[3];
+                for (int k = 0; k < 3; k++) pos[k] = (int32_t)cutp_r32(p, o + k * 4);
+                if (gpa_nf == 0) {
+                    if (!nb || nb > GPA_MAXB) break;
+                    memcpy(gpa_pos, pos, sizeof pos); gpa_nb = (int)nb;
+                    for (uint32_t b = 0; b < nb; b++) gpa_bi[b] = (uint8_t)(cutp_r32(p, o + 0x10 + b * 8) >> 26);
+                } else if (memcmp(pos, gpa_pos, sizeof pos) || (int)nb != gpa_nb) break;   /* moved away: shot over */
+                int same = 1;
+                for (uint32_t b = 0; b < nb; b++) {
+                    const uint32_t a = cutp_r32(p, o + 0x10 + b * 8), c = cutp_r32(p, o + 0x14 + b * 8);
+                    if ((a >> 26) != gpa_bi[b]) same = 0;
+                    int32_t q[4]; q_unpack(a, c, q);
+                    for (int k = 0; k < 4; k++) gpa_q[gpa_nf][b][k] = (int16_t)q[k];
+                }
+                if (same) { gpa_nf++; found = 1; }
+                break;
+            }
+            o += 0x10 + nb * 8;
+        }
+        if (!found) break;
+    }
+    if (gpa_nf >= 30) gpa_ok = 1;
+    rt_logf("grandpa: %d sleeping poses from OPEN.BIN, %d bones, at %d %d %d%s\n", gpa_nf, gpa_nb, gpa_pos[0],
+            gpa_pos[1], gpa_pos[2], gpa_ok > 0 ? "" : " (too few, off)");
+    return gpa_ok > 0;
+}
+static int grandpa_on(void) {
+    static int env = -2;
+    if (env == -2) { const char *e = getenv("RUGRATS_GRANDPA"); env = e ? atoi(e) != 0 : -1; }
+    return env >= 0 ? env : hubrooms_on();
+}
+/* Eyes (2026-11-26, user: "his eyes aren't closed"). Character eye frames are 4bpp 32x32 TIM strips on the disc
+   (DATA/MENU/TIMS/xxEYES.TIM: 64-byte header + frames of 512 bytes: 0 open, 1 shut, 2 half). Which characters' strips
+   a level loads is a per-db mask (table 0x800B91A0 + 4*db -> gp+3568 = 0x800C4C70, stored at 80017e7c / before
+   8007489c; loader 80074b9c: bit set -> file read 800195e0(id) -> buffer + 64 into gp+35xx). Grandpa (id 13) = bit 0x40,
+   GREYES.TIM file id 538 -> gp+3548; 80075304(13, frame) LoadImages that frame to VRAM (832,384) 8x32 (his mouth is
+   bit 0x80, gp+3592, 856,384: not touched). Only Aisle 7 (db 3) and Touchdown Tommy (21) have bit 0x40; the hub (0x2b3b)
+   does not, so its VRAM keeps the sheet's own copy = frame 0, open (checked byte-identical). With the option on, the
+   hub's mask gets bit 0x40 when the loader runs (the game then loads and later frees the 1.6 KB strip itself), and the
+   shut frame is uploaded once per visit through 80075304 (again after a streamed cutscene, which may upload its own
+   frames). A state saved in the hub by an older build has no strip loaded: eyes stay open until the house loads again. */
+static int gpa_eyes;                       /* shut frame uploaded this visit */
+int rt_hook_80074b9c(void) {
+    if (grandpa_on() && mem_r32(0x800C4C70u) == mem_r32(0x800B91A4u) && !(mem_r32(0x800C4C70u) & 0x40u)) {
+        mem_w32(0x800C4C70u, mem_r32(0x800C4C70u) | 0x40u);
+        if (getenv("RUGRATS_GRANDPALOG")) rt_logf("grandpa: hub eye mask -> %08x (GREYES.TIM)\n", mem_r32(0x800C4C70u));
+    }
+    gpa_eyes = 0;
+    return 0;
+}
+void f_80075304(void);
+static void gpa_shut_eyes(void) {
+    if (gpa_eyes || !(mem_r32(0x800C4C70u) & 0x40u) || !mem_r32(0x800C3E80u + 3548)) return;
+    gcall(0x80073f94u, f_80075304, 13, 1, 0, 0);
+    gpa_eyes = 1;
+    if (getenv("RUGRATS_GRANDPALOG")) rt_logf("grandpa: eyes shut (GREYES frame 1 -> VRAM 832,384)\n");
+}
+/* a streamed cutscene starts (packet hook 8007412c): put the open frame back, as the hub had it, so an awake Grandpa
+   in a cutscene is not drawn with shut eyes; the cutscene may set its own frames, gameplay shuts them again after */
+void hooks_grandpa_cut(void) {
+    if (!gpa_eyes) return;
+    gpa_eyes = 0;
+    if (mem_r32(0x800C5678u) != 1 || !(mem_r32(0x800C4C70u) & 0x40u) || !mem_r32(0x800C3E80u + 3548)) return;
+    uint32_t save[32];
+    memcpy(save, cpu.r, sizeof save);
+    gcall(0x80073f94u, f_80075304, 13, 0, 0, 0);
+    memcpy(cpu.r, save, sizeof cpu.r);
+    if (getenv("RUGRATS_GRANDPALOG")) rt_logf("grandpa: cutscene, eyes open again\n");
+}
+void hooks_grandpa_frame(void) {
+    if (mem_r32(0x800C5678u) != 1) { gpa_eyes = 0; return; }
+    if (hooks_cutscene_running()) { gpa_eyes = 0; return; }
+    if (!grandpa_on() || !gpa_load()) return;
+    if (gpa_lg < 0) gpa_lg = getenv("RUGRATS_GRANDPALOG") != NULL;
+    uint32_t save[32];
+    memcpy(save, cpu.r, sizeof save);
+    const uint32_t obj = gcall(0x80073c68u, f_800461f4, GPA_ID, 0, 0, 0);
+    const uint32_t skel = obj ? mem_r32(obj + 0x154) : 0;
+    if (!obj || mem_r8(obj + 0xa6) != 1 || !skel) { memcpy(cpu.r, save, sizeof cpu.r); return; }
+    gpa_shut_eyes();
+    gpa_ticks +=mem_r32(0x800C3F1Cu);                         /* gp+156: this game frame's ticks */
+    const int last = gpa_nf - 1;
+    const double per = 2.0 * last, ph = fmod(gpa_ticks / 10.0, per);   /* 30 poses/s, forwards then back */
+    const double u = ph > last ? per - ph : ph;
+    int i = (int)u; if (i >= last) i = last - 1;
+    const double t = u - i;
+    mem_w16(obj + 0x24, 0); mem_w16(obj + 0x26, 0); mem_w16(obj + 0x28, 0);
+    int moved = 0;
+    for (int k = 0; k < 3; k++) if ((int32_t)mem_r32(obj + 0x18 + k * 4) != gpa_pos[k]) { mem_w32(obj + 0x18 + k * 4, (uint32_t)gpa_pos[k]); moved = 1; }
+    if (moved) gcall(0x80074030u, f_8004a218, obj, 0, 0, 0);   /* into the chair's room list (once per visit) */
+    for (int b = 0; b < gpa_nb; b++) {
+        const uint32_t slot = mem_r8(skel + 0x14 + gpa_bi[b]);
+        if (slot == 0xff) continue;
+        int32_t qa[4], qb[4], q[4];
+        for (int k = 0; k < 4; k++) { qa[k] = gpa_q[i][b][k]; qb[k] = gpa_q[i + 1][b][k]; }
+        q_blend(qa, qb, t, q);
+        for (int k = 0; k < 4; k++) mem_w32(skel + slot * 40u + 0x38u + k * 4, (uint32_t)q[k]);
+    }
+    gcall(0x800740fcu, f_8002b240, obj + 0x18, obj + 0x140, obj + 0x13c, obj + 0x8c);
+    mem_w32(obj + 0x148, mem_r32(obj + 0x13c));
+    if (gpa_lg) rt_logf("grandpa: obj %08x room %d pose %.2f\n", obj, (int8_t)mem_r8(obj + 0x3b), u);
+    memcpy(cpu.r, save, sizeof cpu.r);
+}
+void hooks_grandpa_state(StateIO *s) { ST(s, gpa_ticks); if (st_loading(s)) gpa_eyes = 0; }
 /* camera pair a/b: a cut when the eye jumps or turns a lot between two packets */
 static int cut_is_cut(const uint8_t *a, const uint8_t *b) {
     int32_t qa[4], qb[4];
@@ -4524,6 +4710,7 @@ int rt_hook_8007412c(void) {
     if (pad < 0) { const char *e = getenv("RUGRATS_CUTPAD"); pad = e ? atoi(e) != 0 : 1; }
     cut_last_vbl = hooks_frame(); cut_seen = 1;   /* cutscene_prop(): a streamed cutscene is running */
     if (inside) return 0;
+    { void hooks_grandpa_cut(void); hooks_grandpa_cut(); }   /* Hub World Enhancements: Grandpa's eyes open again */
     uint32_t gp = cpu.r[28];
     uint32_t cnt0 = mem_r16(gp + 3508);
     const int sm = cutsm_active();
