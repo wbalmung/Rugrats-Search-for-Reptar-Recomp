@@ -1133,6 +1133,25 @@ void hooks_level_vblank(void) {
     rt_logf("level: leaving db %d for db %d\n", hooks_level, level_want);
     mem_w32(0x800C4918u, (uint32_t)level_want);
 }
+/* The game's debug "pause message" box (8001d480, e.g. "MemAlloc() failed to find %d bytes.", "Couldn't allocate %d
+   bytes for object memory. (%ld left)") draws its text and then loops forever; the text only exists in guest RAM.
+   Log it once so a hang like that can be read in rugrats.log. */
+int rt_hook_8001d480(void) {
+    static uint32_t logged;
+    char t[160];
+    int n = 0;
+    for (uint32_t a = cpu.r[4]; n < (int)sizeof t - 1; a++) { const uint8_t c = mem_r8(a); if (!c) break; t[n++] = (char)(c >= 32 && c < 127 ? c : '?'); }
+    t[n] = 0;
+    if (logged++ < 4) rt_logf("game: pause message box (hangs here): \"%s\"\n", t);
+    return 0;
+}
+/* Hub World Enhancements (hubrooms.c): the game's file readers take the file id in a0; the object pool setup the db */
+void hubrooms_file(uint32_t id), hubrooms_pool(uint32_t db);
+int rt_hook_80019794(void) { hubrooms_file(cpu.r[4]); return 0; }
+int rt_hook_80019a04(void) { hubrooms_file(cpu.r[4]); return 0; }
+int rt_hook_80019da4(void) { hubrooms_file(cpu.r[4]); return 0; }
+int rt_hook_8001a058(void) { hubrooms_file(cpu.r[4]); return 0; }
+int rt_hook_80046340(void) { hubrooms_pool(cpu.r[4]); return 0; }
 void hooks_keep_progress_snap(void);
 int rt_hook_8006ee14(void) {
     if (cpu.r[31] == 0x80018210u) {
@@ -1205,6 +1224,8 @@ void hooks_state(StateIO *s) {
     hooks_night_state(s);
     void hooks_leaf_state(StateIO *s);
     hooks_leaf_state(s);
+    void hubrooms_state(StateIO *s);
+    hubrooms_state(s);
     if (st_loading(s)) { void hooks_dmg_reset(void); hooks_dmg_reset(); }
 }
 
@@ -3094,8 +3115,13 @@ static void near_room(void (*fn)(void), int *in, int nv) {
     n = nr_clip(b, n, a, -hh * ww, 0, x1 - ox);    /* sx <= x1 */
     n = nr_clip(a, n, b, 0, hh, oy - y0);          /* sy >= y0 */
     n = nr_clip(b, n, a, 0, -hh, y1 - oy);         /* sy <= y1 */
-    if (lg) rt_logf("f%u nearroom %s %d corners z %.0f %.0f %.0f%s%.0f -> %d left\n", present_count, nv == 4 ? "quad" : "tri", nv,
-                    P[0][2], P[1][2], P[2][2], nv == 4 ? " " : "", nv == 4 ? P[3][2] : 0.0, n);
+    if (lg) {
+        rt_logf("f%u nearroom %s %d corners z %.0f %.0f %.0f%s%.0f -> %d left (rect %.0f,%.0f..%.0f,%.0f", present_count,
+                nv == 4 ? "quad" : "tri", nv, P[0][2], P[1][2], P[2][2], nv == 4 ? " " : "", nv == 4 ? P[3][2] : 0.0, n, x0, y0, x1, y1);
+        for (int k = 0; k < nv; k++)
+            if (P[k][2] > 1) rt_logf(" c%d %.0f,%.0f", k, ox + hh * ww * P[k][0] / P[k][2], oy + hh * P[k][1] / P[k][2]);
+        rt_logf(")\n");
+    }
     if (n < 3) return;
     /* the game's pass path: SXY0-2 = corners 0-2, OTZ check, draw */
     gte_mtc2_sxy(12, cpu.r[17], tag_ld[17]);
@@ -5236,7 +5262,8 @@ static int arch_file_read(uint32_t lba, uint32_t size, uint32_t off, uint8_t *ou
     uint8_t sec[2352];
     for (uint32_t done = 0; done < n;) {
         const uint32_t pos = off + done, s = pos / 2048, in = pos % 2048;
-        if (!cd_disc_read(lba + s, sec)) return 0;
+        int hub_sector(uint32_t lba, uint8_t *out);   /* the slot may point at the merged house (hubrooms.c) */
+        if (!hub_sector(lba + s, sec) && !cd_disc_read(lba + s, sec)) return 0;
         uint32_t k = 2048 - in;
         if (k > n - done) k = n - done;
         memcpy(out + done, sec + 24 + in, k);   /* mode 2 form 1: 24 header bytes, 2048 data */

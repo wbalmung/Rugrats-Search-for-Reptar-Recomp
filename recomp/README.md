@@ -1003,6 +1003,17 @@ the object draw hooks, because the timer pass that normally drives this part doe
 `RUGRATS_NIGHTPOWER=0` keeps the furniture dark there. The ceiling fan part also stands down in room 44 (fan counts as
 powered), but the fan is never drawn or ticked after the cut, so nothing changes on screen.
 
+Hub World Enhancements (Enhancements page, ini `[game] hub_world`: 1 On = default, 0 Off = original;
+`RUGRATS_HUBWORLD`). On: the house's hall door and kitchen door lead into the family room and the garage. The game
+has these rooms only in Chuckie's Glasses (db 10), built in the same house coordinates; when the house loads, the
+port builds a merged house from the player's own disc (`runtime/hubrooms.c`): db 10's two rooms and their doorways
+(geometry, portals, collision cells, 17 static objects, 3 models), the hub's two door knobs removed, every borrowed
+picture found again in the hub's own texture sheet (6 missing palettes put into unused palette slots). The hub had
+almost no memory left, so it gets a 12 KB bigger object pool and a 512 KB heap extension in the port's extra RAM
+(kept in save states). Applies the next time the house loads; Off gives the original files. Debug:
+`RUGRATS_HUBLOG=1`, `RUGRATS_HUBDUMP=<dir>` (writes the merged files: game data, never share them). Also new:
+the game's debug pause box (`8001d480`, e.g. "MemAlloc() failed") now writes its text to `rugrats.log`.
+
 Final Level Behavior (Enhancements page, ini `[game] final_level`: 1 Enhanced = default, 0 Default = original;
 `RUGRATS_FINALLEVEL`). Enhanced = four parts, all on or all off: (1) stay in the level after the last piece, (2) a
 "Final level unlocked!" screen, (3) the hub TV as the final-level entrance, (4) progress kept after the credits.

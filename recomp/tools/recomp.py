@@ -100,6 +100,12 @@ HOOKS = {
     0x80077864: "damage event (a0 = msg: +4 obj, +0x10 other obj, +0x14 amount -> obj+0x1a4): player hit cooldown",
     0x8004e2ac: "spinning prop timer callback (yaw += obj+0x2c.. x vblanks): kitchen ceiling fan still in Let There Be Light (db 12)",
     0x80056834: "anim update (obj): marks timer-driven characters for in-between smoothing (Chuckie, RUGRATS_AISMOOTH)",
+    0x8001d480: "debug pause message box (a0 = text; loops forever): text written to rugrats.log",
+    0x80019794: "file read by id (a0): Hub World Enhancements points the hub's file slots at the merged house (hubrooms.c)",
+    0x80019a04: "file read by id (a0): Hub World Enhancements (hubrooms.c)",
+    0x80019da4: "file read / stream start by id (a0): Hub World Enhancements (hubrooms.c)",
+    0x8001a058: "file read by id (a0): Hub World Enhancements (hubrooms.c)",
+    0x80046340: "object memory pool setup (a0 = db): Hub World Enhancements gives the hub a bigger pool (hubrooms.c)",
 }
 
 # Load instructions whose loaded value goes through a native function (runtime/hooks.c):

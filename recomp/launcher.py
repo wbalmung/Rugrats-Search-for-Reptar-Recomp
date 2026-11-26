@@ -220,6 +220,9 @@ SETTINGS = [
     ("Enhancements", "\"Let There Be Light\" Fixes", "game", "light_fixes", 1, BOOL, ["Original", "Fixed"],
      "Fixed: the power is out in Let There Be Light, so the kitchen ceiling fan stands still and various objects that kept "
      "their daytime colours get night colours. Original: as on the disc."),
+    ("Enhancements", "Hub World Enhancements", "game", "hub_world", 1, BOOL, OFF_ON,
+     "On: the family room and the garage behind the house's two closed doors can be explored (rooms and furniture "
+     "from Chuckie's Glasses, read from your disc). Applies when the house loads."),
     ("Enhancements", "Final Level Behavior", "game", "final_level", 1, BOOL, ["Default", "Enhanced"],
      "Enhanced: after the last puzzle piece you stay in the level; the TV in the house starts Reptar 2010. Default: straight on."),
 ]

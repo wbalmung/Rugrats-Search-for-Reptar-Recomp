@@ -1426,6 +1426,9 @@ static MenuItem menu_items[] = {
     { "\"Let There Be Light\" Fixes", MI_CHOICE, &opt.light_fixes, v_bool, 2, shotwalk_names, NULL, NULL, "game", "light_fixes", NULL,
       "Fixed: the power is out, so the kitchen ceiling fan stands still and various objects that kept their daytime "
       "colours get night colours; hedges shed leaves instead of stray markers. Original: as on the disc.", T_ENH },
+    { "Hub World Enhancements", MI_CHOICE, &opt.hub_world, v_bool, 2, off_on, NULL, NULL, "game", "hub_world", NULL,
+      "On: the family room and the garage behind the house's two closed doors can be explored (rooms and furniture "
+      "from Chuckie's Glasses, read from your disc). Applies the next time the house loads. Off: original.", T_ENH },
     { "Final Level Behavior", MI_CHOICE, &opt.final_level, v_bool, 2, finallevel_names, NULL, NULL, "game", "final_level", NULL,
       "Enhanced: after the last puzzle piece you stay in the level; the TV in the house (Triangle) starts Reptar 2010; "
       "after the credits you keep your pieces and bars. Default: straight on to the final level.", T_ENH },
@@ -2844,6 +2847,7 @@ static void load_config(void) {
     opt.light_fixes = GetPrivateProfileIntA("game", "light_fixes", GetPrivateProfileIntA("game", "fan_still", 1, ini), ini) != 0;
     opt.fan_still = opt.night_furn = opt.hedge_leaves = opt.kitchen_arch = 1;
     opt.final_level = GetPrivateProfileIntA("game", "final_level", 1, ini) != 0;
+    opt.hub_world = GetPrivateProfileIntA("game", "hub_world", 1, ini) != 0;
     opt.rcam_override = GetPrivateProfileIntA("input", "rcam_override", 0, ini) != 0;
     bind_load(ini);
     if (opt.golf_aim < 0) opt.golf_aim = 0;
