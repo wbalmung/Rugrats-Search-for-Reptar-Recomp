@@ -1226,6 +1226,9 @@ void hooks_state(StateIO *s) {
     hooks_leaf_state(s);
     void hubrooms_state(StateIO *s);
     hubrooms_state(s);
+    void hooks_egg_state(StateIO *s);
+    st_prefix(s, "hooks");
+    hooks_egg_state(s);
     if (st_loading(s)) { void hooks_dmg_reset(void); hooks_dmg_reset(); }
 }
 
@@ -2163,6 +2166,48 @@ void f_80072bf0(void);
 void f_80049eec(void);
 static int lbl_inside, lbl_redraw, lbl_nfired;
 static uint32_t lbl_fired[16];
+/* ---- Egg Hunt Toys (opt.egg_toys, 2026-11-26) -------------------------------------------------------------------
+   Egg Hunt (db 18) has the hub's living-room toys in the same places, but its LP records leave out the "can be
+   picked up" bit. The idle handler (8005d3b4, Circle) lifts the faced object (finder 800631d8 -> player+244) only when
+   obj+0 has bit 0x10000, it has no obj+84 handler and the db is not golf (23..31); state 7 then carries it
+   (player+496) and a second Circle throws it (state 8). In the hub (db 1) these LP ids have the bit: 396 398 403 581 896
+   (rooms 23 / 25; 401, the red car, is not in Egg Hunt). Here they get it too, once per visit (the game may change
+   the flag word while a toy is carried, so it is never forced again; `egg_done` is in save states). Only the bit is
+   added; the hub's hint callbacks on 403 / 581 are not copied. RUGRATS_EGGTOYS=0/1 overrides the option. */
+static const uint16_t egg_toy_ids[] = { 396, 398, 403, 581, 896 };
+static int egg_done;
+static int egg_toys_on(void) {
+    static int env = -2;
+    if (env == -2) { const char *e = getenv("RUGRATS_EGGTOYS"); env = e ? atoi(e) != 0 : -1; }
+    return env >= 0 ? env : opt.egg_toys;
+}
+static void egg_toys_frame(void) {
+    if (mem_r32(0x800C5678u) != 18) { egg_done = 0; return; }
+    if (egg_done || !egg_toys_on()) return;
+    const uint32_t tbl = mem_r32(0x800C4A8Cu);
+    const int nrooms = (int)mem_r32(0x800C4A9Cu);
+    if (!tbl || nrooms <= 0 || nrooms > 128) return;
+    int found = 0;
+    for (int i = 0; i < nrooms; i++) {
+        int g = 0;
+        for (uint32_t n = mem_r32(tbl + (uint32_t)i * 0x70 + 0x48); n && g < 512; n = mem_r32(n + 4), g++) {
+            const uint32_t o = mem_r32(n + 8);
+            if (!o) continue;
+            const uint16_t id = mem_r16(o + 150);
+            for (size_t k = 0; k < sizeof egg_toy_ids / sizeof egg_toy_ids[0]; k++)
+                if (id == egg_toy_ids[k]) {
+                    const uint32_t f = mem_r32(o);
+                    if (!(f & 0x10000u) && !mem_r32(o + 84)) mem_w32(o, f | 0x10000u);
+                    found++;
+                    static int lg = -1;
+                    if (lg < 0) lg = getenv("RUGRATS_EGGTOYSLOG") != NULL;
+                    if (lg) rt_logf("eggtoys: obj %08x id %u room %d flags %08x -> %08x\n", o, id, i, f, mem_r32(o));
+                }
+        }
+    }
+    if (found) egg_done = 1;
+}
+void hooks_egg_state(StateIO *s) { ST(s, egg_done); }
 /* ---- TV to Final Level (part of opt.final_level) ---------------------------------------------------------------
    Once all 12 puzzle pieces are placed (80094b8c() == 12), the TV in the hub (model 135, found in the proximity list
    0x800C4C24 by its own enter callback 8004d0f0) becomes a level entrance like the game's own: obj+84 = 8004f78c
@@ -2588,6 +2633,7 @@ int rt_hook_80072d38(void) {
 }
 int rt_hook_80072bf0(void) {
     if (!lbl_inside) tv_frame();      /* TV to Final Level: once per game frame, before the timers fire */
+    if (!lbl_inside) egg_toys_frame();   /* Egg Hunt Toys */
     if (!lbl_inside) { void hooks_night_frame(void); hooks_night_frame(); void hooks_leaf_frame(void); hooks_leaf_frame(); }   /* "Let There Be Light" Fixes (furniture) */
     if (lbl_inside || !opt.fixed_timestep) return 0;
     lbl_inside = 1;

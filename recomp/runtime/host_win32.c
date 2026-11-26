@@ -1426,6 +1426,9 @@ static MenuItem menu_items[] = {
     { "Hub World Enhancements", MI_CHOICE, &opt.hub_world, v_bool, 2, off_on, NULL, NULL, "game", "hub_world", NULL,
       "On: the family room and the garage behind the house's two closed doors can be explored (rooms and furniture "
       "from Chuckie's Glasses, read from your disc). Applies the next time the house loads. Off: original.", T_ENH },
+    { "Egg Hunt Toys", MI_CHOICE, &opt.egg_toys, v_bool, 2, off_on, NULL, NULL, "game", "egg_toys", NULL,
+      "On: in Egg Hunt the living-room toys that can be picked up and thrown in the house (ball, guitar and the "
+      "others) can be picked up and thrown there too. Applies the next time Egg Hunt starts. Off: original.", T_ENH },
     { "Final Level Behavior", MI_CHOICE, &opt.final_level, v_bool, 2, finallevel_names, NULL, NULL, "game", "final_level", NULL,
       "Enhanced: after the last puzzle piece you stay in the level; the TV in the house (Triangle) starts Reptar 2010; "
       "after the credits you keep your pieces and bars. Default: straight on to the final level.", T_ENH },
@@ -2845,6 +2848,7 @@ static void load_config(void) {
     opt.fan_still = opt.night_furn = opt.hedge_leaves = opt.kitchen_arch = 1;
     opt.final_level = GetPrivateProfileIntA("game", "final_level", 1, ini) != 0;
     opt.hub_world = GetPrivateProfileIntA("game", "hub_world", 1, ini) != 0;
+    opt.egg_toys = GetPrivateProfileIntA("game", "egg_toys", 1, ini) != 0;
     opt.rcam_override = GetPrivateProfileIntA("input", "rcam_override", 0, ini) != 0;
     bind_load(ini);
     if (opt.golf_aim < 0) opt.golf_aim = 0;

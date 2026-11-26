@@ -1027,6 +1027,14 @@ almost no memory left, so it gets a 12 KB bigger object pool and a 512 KB heap e
 `RUGRATS_HUBLOG=1`, `RUGRATS_HUBDUMP=<dir>` (writes the merged files: game data, never share them). Also new:
 the game's debug pause box (`8001d480`, e.g. "MemAlloc() failed") now writes its text to `rugrats.log`.
 
+Egg Hunt Toys (Enhancements page, ini `[game] egg_toys`: 1 On = default, 0 Off = original; `RUGRATS_EGGTOYS`).
+Egg Hunt has the house's living-room toys in the same places, but its object records leave out the "can be picked
+up" bit the house gives them (object flag word bit 0x10000, tested by the idle handler `8005d3b4` before it lifts the
+faced object). On: the first gameplay frame of each Egg Hunt visit adds the bit to the objects with the same ids as
+the house's pickable living-room toys (396 398 403 581 896: ball, guitar and the others; the red car 401 is not in
+Egg Hunt), so Circle picks them up and throws them as in the house. Nothing else about them changes. Debug:
+`RUGRATS_EGGTOYSLOG=1`.
+
 Final Level Behavior (Enhancements page, ini `[game] final_level`: 1 Enhanced = default, 0 Default = original;
 `RUGRATS_FINALLEVEL`). Enhanced = four parts, all on or all off: (1) stay in the level after the last piece, (2) a
 "Final level unlocked!" screen, (3) the hub TV as the final-level entrance, (4) progress kept after the credits.

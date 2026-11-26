@@ -220,6 +220,8 @@ SETTINGS = [
     ("Enhancements", "Hub World Enhancements", "game", "hub_world", 1, BOOL, OFF_ON,
      "On: the family room and the garage behind the house's two closed doors can be explored (rooms and furniture "
      "from Chuckie's Glasses, read from your disc). Applies when the house loads."),
+    ("Enhancements", "Egg Hunt Toys", "game", "egg_toys", 1, BOOL, OFF_ON,
+     "On: in Egg Hunt the living-room toys that can be picked up and thrown in the house can be picked up there too."),
     ("Enhancements", "Final Level Behavior", "game", "final_level", 1, BOOL, ["Default", "Enhanced"],
      "Enhanced: after the last puzzle piece you stay in the level; the TV in the house starts Reptar 2010. Default: straight on."),
 ]
