@@ -222,6 +222,8 @@ SETTINGS = [
      "from Chuckie's Glasses, read from your disc). Applies when the house loads."),
     ("Enhancements", "Egg Hunt Toys", "game", "egg_toys", 1, BOOL, OFF_ON,
      "On: in Egg Hunt the living-room toys that can be picked up and thrown in the house can be picked up there too."),
+    ("Enhancements", "Disable Stage Timers", "game", "no_timers", 0, BOOL, OFF_ON,
+     "On: the countdown in Grandpa's Teeth, 7 Voyages of Cynthia, Mirrorland, Gold Rush and Egg Hunt stands still."),
     ("Enhancements", "Final Level Behavior", "game", "final_level", 1, BOOL, ["Default", "Enhanced"],
      "Enhanced: after the last puzzle piece you stay in the level; the TV in the house starts Reptar 2010. Default: straight on."),
 ]

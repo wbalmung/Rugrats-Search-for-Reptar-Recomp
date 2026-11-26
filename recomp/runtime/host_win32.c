@@ -1429,6 +1429,9 @@ static MenuItem menu_items[] = {
     { "Egg Hunt Toys", MI_CHOICE, &opt.egg_toys, v_bool, 2, off_on, NULL, NULL, "game", "egg_toys", NULL,
       "On: in Egg Hunt the living-room toys that can be picked up and thrown in the house (ball, guitar and the "
       "others) can be picked up and thrown there too. Applies the next time Egg Hunt starts. Off: original.", T_ENH },
+    { "Disable Stage Timers", MI_CHOICE, &opt.no_timers, v_bool, 2, off_on, NULL, NULL, "game", "no_timers", NULL,
+      "On: the countdown in Grandpa's Teeth, 7 Voyages of Cynthia, Mirrorland, Gold Rush and Egg Hunt stands still, "
+      "so it never runs out; collecting everything still ends the round. Off: original.", T_ENH },
     { "Final Level Behavior", MI_CHOICE, &opt.final_level, v_bool, 2, finallevel_names, NULL, NULL, "game", "final_level", NULL,
       "Enhanced: after the last puzzle piece you stay in the level; the TV in the house (Triangle) starts Reptar 2010; "
       "after the credits you keep your pieces and bars. Default: straight on to the final level.", T_ENH },
@@ -2849,6 +2852,7 @@ static void load_config(void) {
     opt.final_level = GetPrivateProfileIntA("game", "final_level", 1, ini) != 0;
     opt.hub_world = GetPrivateProfileIntA("game", "hub_world", 1, ini) != 0;
     opt.egg_toys = GetPrivateProfileIntA("game", "egg_toys", 1, ini) != 0;
+    opt.no_timers = GetPrivateProfileIntA("game", "no_timers", 0, ini) != 0;
     opt.rcam_override = GetPrivateProfileIntA("input", "rcam_override", 0, ini) != 0;
     bind_load(ini);
     if (opt.golf_aim < 0) opt.golf_aim = 0;

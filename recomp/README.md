@@ -1027,6 +1027,14 @@ almost no memory left, so it gets a 12 KB bigger object pool and a 512 KB heap e
 `RUGRATS_HUBLOG=1`, `RUGRATS_HUBDUMP=<dir>` (writes the merged files: game data, never share them). Also new:
 the game's debug pause box (`8001d480`, e.g. "MemAlloc() failed") now writes its text to `rugrats.log`.
 
+Disable Stage Timers (Enhancements page, ini `[game] no_timers`: 0 Off = default = original, 1 On;
+`RUGRATS_NOTIMERS`). The game has one stage clock (gp+0x5b0, 1/300 s ticks, counted down by `8007f5a8`); when it
+runs out, each level runs its own timeout handler. In Grandpa's Teeth, 7 Voyages of Cynthia and Mirrorland that kills
+the player; in Gold Rush and Egg Hunt it fails you unless you collected enough. On: in those five levels the clock
+stands still (it is still shown). The game's own "end now" (timer set to 1 tick when everything is collected) still
+ends the round. Aisle 7's pie gallery, Circus Angelicus and the Training Level use the clock to trigger level events,
+not to fail you, so they are left alone.
+
 Egg Hunt Toys (Enhancements page, ini `[game] egg_toys`: 1 On = default, 0 Off = original; `RUGRATS_EGGTOYS`).
 Egg Hunt has the house's living-room toys in the same places, but its object records leave out the "can be picked
 up" bit the house gives them (object flag word bit 0x10000, tested by the idle handler `8005d3b4` before it lifts the

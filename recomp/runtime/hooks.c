@@ -2208,6 +2208,27 @@ static void egg_toys_frame(void) {
     if (found) egg_done = 1;
 }
 void hooks_egg_state(StateIO *s) { ST(s, egg_done); }
+/* ---- Disable Stage Timers (opt.no_timers, 2026-11-26, default Off) ----------------------------------------------
+   One stage timer for every level: gp+0x5b0 (0x800C4430), ticks of 1/300 s, set by 80078dd8(seconds) from level
+   scripts, cleared (stopped) by 80078df8. 8007f5a8 runs each frame while it is not 0 (from 8007733c): subtracts the
+   frame's ticks (gp+156), draws the seconds, and at 0 plays sound 117 and posts the level's timeout handler (per-db
+   table 0x800158CC, db 2..18). Handlers that FAIL the stage: Grandpa's Teeth 2 (8007ecc4), 7 Voyages of Cynthia 4
+   (8007e2e8), Mirrorland 15 (8007d4e4) = player death 8007fd0c; Gold Rush 17 (80079b38) and Egg Hunt 18 (800797ec)
+   = death if the count (player+425) is short, else the win message. Aisle 7 (3, pie gallery end), Circus Angelicus
+   (11) and the Training Level (16) use the timeout as an event, not a failure: left alone. With the option on, in
+   the failing levels the ticks are given back before the original runs, so the clock stands still (and is still
+   drawn). A timer of 1 tick is the game's "end now" (the pickup code 80051bfc sets it once enough is collected), so
+   1 still runs out and the round ends as normal. RUGRATS_NOTIMERS=0/1 overrides the option. */
+int rt_hook_8007f5a8(void) {
+    static int env = -2;
+    if (env == -2) { const char *e = getenv("RUGRATS_NOTIMERS"); env = e ? atoi(e) != 0 : -1; }
+    if (!(env >= 0 ? env : opt.no_timers)) return 0;
+    const uint32_t db = mem_r32(0x800C5678u);
+    if (db != 2 && db != 4 && db != 15 && db != 17 && db != 18) return 0;
+    const int32_t t = (int32_t)mem_r32(0x800C4430u);
+    if (t > 1) mem_w32(0x800C4430u, (uint32_t)(t + (int32_t)mem_r32(0x800C3F1Cu)));
+    return 0;
+}
 /* ---- TV to Final Level (part of opt.final_level) ---------------------------------------------------------------
    Once all 12 puzzle pieces are placed (80094b8c() == 12), the TV in the hub (model 135, found in the proximity list
    0x800C4C24 by its own enter callback 8004d0f0) becomes a level entrance like the game's own: obj+84 = 8004f78c

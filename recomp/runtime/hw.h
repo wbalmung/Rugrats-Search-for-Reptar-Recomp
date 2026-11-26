@@ -183,6 +183,8 @@ typedef struct {
     int hub_world;       /* Hub World Enhancements (F1 Enhancements, ini [game] hub_world, default 1). 1 = the house
                             (db 1) gets the family room and the garage behind its two closed doors, taken from
                             Chuckie's Glasses (db 10) at load time; hubrooms.c. 0 = original. */
+    int no_timers;       /* Disable Stage Timers (F1 Enhancements, ini [game] no_timers, default 0). 1 = the stage clock
+                            stands still in levels where running out fails you (db 2 4 15 17 18); hooks.c rt_hook_8007f5a8 */
     int egg_toys;        /* Egg Hunt Toys (F1 Enhancements, ini [game] egg_toys, default 1). 1 = in Egg Hunt (db 18)
                             the living-room toys the hub lets you pick up get the pickup bit too; hooks.c egg_toys_* */
     int final_level;     /* Final Level Behavior. 1 = Enhanced: after the last puzzle piece, a "Final level unlocked!"
