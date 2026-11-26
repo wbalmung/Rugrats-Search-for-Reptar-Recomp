@@ -1435,8 +1435,6 @@ static MenuItem menu_items[] = {
     { "Final Level Behavior", MI_CHOICE, &opt.final_level, v_bool, 2, finallevel_names, NULL, NULL, "game", "final_level", NULL,
       "Enhanced: after the last puzzle piece you stay in the level; the TV in the house (Triangle) starts Reptar 2010; "
       "after the credits you keep your pieces and bars. Default: straight on to the final level.", T_ENH },
-    { "Level Select...", MI_ACTION, NULL, NULL, 0, NULL, NULL, NULL, NULL, NULL, ac_levels,  /* last on its page */
-      "Jump to any level (during gameplay). The current level is left as if through a door.", T_ENH },
     { "Right-stick camera", MI_CHOICE, &opt.rcam, v_rcam, 3, rcam_names, NULL, NULL, "input", "rstick_camera", NULL,
       "Right stick (or J/L/I/K) turns the camera around the player. Auto-center: drifts back behind when released.", T_AUDIO, "Input" },
     { "Camera up/down", MI_CHOICE, &opt.rcam_invert, v_bool, 2, rcam_inv_names, NULL, NULL, "input", "rstick_invert", NULL,
@@ -1469,6 +1467,8 @@ static MenuItem menu_items[] = {
     { "Freecam", MI_CHOICE, &hooks_freecam, v_bool, 2, off_on, NULL, NULL, NULL, NULL, NULL,
       "Detach the camera and fly through the level (the player stands still). Move: d-pad / left stick, look: right "
       "stick or J L I K, up / down: R1 / L1, hold Cross: fast, Square: slow. Gameplay only.", T_DEBUG },
+    { "Level Select...", MI_ACTION, NULL, NULL, 0, NULL, NULL, NULL, NULL, NULL, ac_levels,  /* last on its page */
+      "Jump to any level (during gameplay). The current level is left as if through a door.", T_DEBUG },
     { "Quick save", MI_ACTION, NULL, NULL, 0, NULL, NULL, NULL, NULL, NULL, ac_qsave,
       "Save the game right here (during gameplay). Keyboard: F5.", T_ACTIONS },
     { "Quick load", MI_ACTION, NULL, NULL, 0, NULL, NULL, NULL, NULL, NULL, ac_qload,
@@ -1578,7 +1578,7 @@ static void confirm_key(int vk) {
     }
 }
 
-/* Level Select (Enhancements row): a list of the playable levels over the options panel. Going there sets the game's
+/* Level Select (Debug row): a list of the playable levels over the options panel. Going there sets the game's
    own "next level" variable (hooks_level_request), so the current level ends as if through a door and the chosen one
    loads with its normal intro. Level numbers are the game's databases (0x800C5678); left out: 0 menus and 22 Multiplayer
    Golf (needs the main menu's player setup). The cut levels 8 Ice Cream Mountain (icecream.c: converted from the
@@ -2313,7 +2313,7 @@ static void menu_test_step(int step) {
         pad_inject = 0;
         if (step >= ns) { pad_inject = -1; menu_open = 0; return; }
         int k = ps[step];
-        if (k == LV) { menu_set_tab(T_ENH); ac_levels(); }
+        if (k == LV) { menu_set_tab(T_DEBUG); ac_levels(); }
         else if (k == MV) {
             if (!xy_set && lvl_open) {   /* park the "cursor" on the 7th visible row */
                 xy_set = 1; mx = (lv_x0 + lv_x1) / 2; my = lv_y0 + lv_rowh * 6 + lv_rowh / 2;
@@ -2334,7 +2334,7 @@ static void menu_test_step(int step) {
     /* RUGRATS_MENU_LVL=<db>: open Level Select, select that level, one shot (menuN), then Enter = go */
     const char *lv = getenv("RUGRATS_MENU_LVL");
     if (lv) {
-        if (step == 0) { menu_set_tab(T_ENH); ac_levels(); return; }
+        if (step == 0) { menu_set_tab(T_DEBUG); ac_levels(); return; }
         if (step == 1) { for (int i = 0; i < LVL_N; i++) if (lvl_list[i].db == atoi(lv)) lvl_sel = i; lvl_clamp(); return; }
         if (step == 2) {
             char n[32]; snprintf(n, sizeof n, "menu%d", shot++);

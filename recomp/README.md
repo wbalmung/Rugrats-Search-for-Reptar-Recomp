@@ -900,7 +900,7 @@ Ball rolling (`8005fcb8`, stroke counted at launch): 1 swing in 3, 0.3 s later, 
 82, Chuckie 347, Angelica 598, Phil 820 868, Lil 949 995; unheard first, never the same twice in a row) if nothing
 else is playing. Off: original.
 
-Level Select (Enhancements page, "Level Select..." row): a list of the 28 playable levels plus the cut levels "Ice Cream
+Level Select (Debug page, "Level Select..." row): a list of the 28 playable levels plus the cut levels "Ice Cream
 Mountain" and "Be Bad" (game database numbers; not 0 menus, 22 Multiplayer Golf, see "Per-level performance test").
 Ice Cream Mountain (db 8) is converted from the disc's pre-release files the first time it is requested
 (`icecream.c`, nothing of the game is shipped): level geometry, portals and texture table to the released level

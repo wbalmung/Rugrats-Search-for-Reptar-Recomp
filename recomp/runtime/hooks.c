@@ -1069,7 +1069,7 @@ int rt_hook_80018c38(void) {
     }
     return 0;
 }
-/* F1 Enhancements "Level Select" (host_win32.c): only while the level loop runs gameplay frames (not on the title,
+/* F1 Debug "Level Select" (host_win32.c): only while the level loop runs gameplay frames (not on the title,
    in cutscenes or in the pause screen); the request uses the same exit path as RUGRATS_LEVEL at the next vblank. */
 int hooks_gameplay(void) { return hooks_level > 0 && present_count - pace_present <= 2; }
 void hooks_level_request(int db) {
