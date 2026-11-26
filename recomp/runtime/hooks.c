@@ -2815,12 +2815,14 @@ static int pair_panel(uint32_t m, int16_t lo[3], int16_t hi[3]) {
     return 1;
 }
 void f_80010000(void);
+static int obj_trace;   /* (declared again below; debug RUGRATS_OBJTRACE) */
 int rt_hook_80010000(void) {
     static int in, on = -1, lg = -1;
     if (in) return 0;
     if (on < 0) { const char *e = getenv("RUGRATS_PAIRCULL"); on = e ? atoi(e) != 0 : 1; }
     if (lg < 0) lg = getenv("RUGRATS_PAIRLOG") != NULL;
     const uint32_t m = cpu.r[4], obj = cpu.r[16];
+    if (obj_trace) rt_logf("f%u objtrace model %08x draw (ra %08x, %d vertices)\n", present_count, m, cpu.r[31], (int16_t)mem_r16(m + 0x10));
     if (!on || !m || cpu.r[31] != 0x80031d18u) return 0;
     if (hooks_level != pair_level) {   /* new level: models are reloaded */
         pair_level = hooks_level;
@@ -2863,6 +2865,7 @@ int rt_hook_80010000(void) {
     return 1;
 }
 static int near_pass;   /* this object draw was let through the near cull (rt_hook_8001eb4c): lens faces dropped */
+static int obj_trace;   /* debug RUGRATS_OBJTRACE=<hex obj>: this object's face setups are logged (near_face) */
 static int near_hide;   /* ... and most of its faces were at the lens last frame: drop them all (camera inside it) */
 static int near_slot = -1;
 static struct { uint32_t obj, frame; int kept, lens, hidden; } near_tab[16];
@@ -2924,8 +2927,17 @@ int rt_hook_80031b84(void) {
         near_pass = 0; near_hide = 0; near_slot = -1;
         return 1;
     }
+    {   /* debug: RUGRATS_OBJTRACE=<hex obj> logs every face setup of that object (near_face) */
+        static uint32_t want = 1;
+        if (want == 1) { const char *e = getenv("RUGRATS_OBJTRACE"); want = e ? (uint32_t)strtoul(e, NULL, 16) : 0; }
+        if (!in) obj_trace = want && cpu.r[4] == want;
+        if (obj_trace) rt_logf("f%u objtrace %08x draw (ra %08x, stamp %08x now %08x, gp+194 %d)\n", present_count, cpu.r[4], cpu.r[31],
+                               mem_r32(cpu.r[4] + 0x60), mem_r32(0x800C3F24u), (int16_t)mem_r16(0x800C3E80u + 0x194));
+    }
+    const int outer = !in;
     const int r = obj_draw(f_80031b84, &in, DCLS_OBJ);
     if (r) { near_pass = 0; near_hide = 0; near_slot = -1; }
+    if (outer) obj_trace = 0;
     return r;
 }
 /* Mesh face setup 800102dc (quads) / 80010174 (triangles), rooms + objects: s0 = face, t6 = projected vertex table
@@ -2934,13 +2946,49 @@ int rt_hook_80031b84(void) {
    SZ 0 and a screen position anywhere, or pins them at the +-1024 screen limit (a slab from the counter edge to
    Tommy). Such faces are skipped: any corner SZ < RUGRATS_NEARFACE (default 48; 0 = keep all) or pinned.
    RUGRATS_NEARLOG=1 also logs every face of those objects. */
+static int obj_lens_on(void);
+static void obj_lens_rescue(int nv);
+int gte_sxp(int s, double out[3]);
 static void near_face(void (*fn)(void), int *in, int nv) {
     static int lim = -1, lg = -1;
     if (lim < 0) { const char *e = getenv("RUGRATS_NEARFACE"); lim = e ? atoi(e) : 48; }
     if (lg < 0) lg = getenv("RUGRATS_NEARLOG") != NULL;
     const uint32_t ix = mem_r32(cpu.r[16] + 4), tab = cpu.r[14];
     *in = 1; fn(); *in = 0;
-    if ((int32_t)cpu.r[25] <= 0) return;
+    if (obj_trace) {
+        char b[300]; int m = 0;
+        for (int i = 0; i < nv; i++) {
+            const uint32_t o = i == 0 ? (ix & 0xffu) << 3 : (ix >> (i * 8 - 3)) & 0x7f8u, fl = mem_r32(tab + o + 4);
+            m += snprintf(b + m, sizeof b - m, " %d,%d/%u/%02x", (int16_t)mem_r16(tab + o), (int16_t)mem_r16(tab + o + 2), fl & 0xffffu, (fl >> 16) & 0x7f);
+        }
+        rt_logf("f%u objtrace face%s t9 %d\n", present_count, b, (int32_t)cpu.r[25]);
+    }
+    {   /* debug RUGRATS_FACECHECK=1: the lens rescue's 3D facing test vs the game's NCLIP on faces fully in front */
+        static int fc = -1; static unsigned agree, disagree;
+        if (fc < 0) fc = getenv("RUGRATS_FACECHECK") != NULL;
+        if (fc && cpu.r[25] && !(mem_r32(cpu.r[16]) & 1) && gte_dcls == DCLS_OBJ) {
+            int ok = 1;
+            const uint32_t hp = gte_read(58) & 0xffffu;
+            double P[4][3];
+            for (int i = 0; i < nv && ok; i++) {
+                const uint32_t o = i == 0 ? (ix & 0xffu) << 3 : (ix >> (i * 8 - 3)) & 0x7f8u;
+                const int sx = (int16_t)mem_r16(tab + o), sy = (int16_t)mem_r16(tab + o + 2);
+                ok = (mem_r32(tab + o + 4) & 0xffffu) >= hp && sx > -1024 && sx < 1023 && sy > -1024 && sy < 1023;
+                static const int reg[4] = { 17, 18, 19, 20 };
+                if (ok) { gte_mtc2_sxy(12, cpu.r[reg[i]], tag_ld[reg[i]]); ok = gte_sxp(0, P[i]); }
+            }
+            if (ok) {
+                #define DET3(a, b, c) ((a)[0] * ((b)[1] * (c)[2] - (b)[2] * (c)[1]) - (a)[1] * ((b)[0] * (c)[2] - (b)[2] * (c)[0]) + (a)[2] * ((b)[0] * (c)[1] - (b)[1] * (c)[0]))
+                const int front = DET3(P[0], P[1], P[2]) > 0;
+                #undef DET3
+                if (front == ((int32_t)cpu.r[25] > 0)) agree++; else disagree++;
+                if ((agree + disagree) % 5000 == 0) rt_logf("facecheck: %u agree, %u disagree\n", agree, disagree);
+            }
+            gte_mtc2_sxy(12, cpu.r[17], tag_ld[17]); gte_mtc2_sxy(13, cpu.r[18], tag_ld[18]); gte_mtc2_sxy(14, cpu.r[19], tag_ld[19]);
+        }
+    }
+    if ((int32_t)cpu.r[25] <= 0) { if (!near_pass && obj_lens_on()) obj_lens_rescue(nv); return; }
+    if (!near_pass && !pair_model) return;   /* hooked only for the lens rescue */
     if (pair_model) {   /* back-to-back panel (rt_hook_80010000): only the side facing the camera */
         int32_t sx[3], sy[3];
         for (int i = 0; i < 3; i++) {
@@ -3006,6 +3054,15 @@ static void near_room(void (*fn)(void), int *in, int nv) {
     *in = 1; fn(); *in = 0;
     const uint32_t w = mem_r32(cpu.r[16]), tab = cpu.r[14];
     const uint32_t off[4] = { (w & 0xffu) << 3, (w >> 5) & 0x7f8u, (w >> 13) & 0x7f8u, (w >> 21) & 0x7f8u };
+    if (obj_trace) {
+        char b[300]; int m = 0;
+        for (int i = 0; i < nv; i++) {
+            const uint32_t fl = mem_r32(tab + off[i] + 4);
+            m += snprintf(b + m, sizeof b - m, " %d,%d/%u/%02x", (int16_t)mem_r16(tab + off[i]), (int16_t)mem_r16(tab + off[i] + 2), fl & 0xffffu, (fl >> 16) & 0x7f);
+        }
+        rt_logf("f%u objtrace splitface dcls %d%s t9 %d t7 %08x\n", present_count, gte_dcls, b, (int32_t)cpu.r[25], cpu.r[23]);
+    }
+    if (gte_dcls != DCLS_ROOM) return;   /* an object face (traced above): nothing else here */
     /* No 2D split with perspective textures (2026-11-20, user: Grandpa's Teeth, the bricks along the hedge border
        bend upward past a certain camera position). The caller splits a face that passed in 2D (flags 0x20: all
        corners SZ < 8192 -> 2 pieces, 0x40: < 4096 -> 4; t7 bits 21 / 22), with each new corner at the average
@@ -3134,10 +3191,84 @@ static void near_room(void (*fn)(void), int *in, int nv) {
 }
 void f_800112dc(void);
 void f_800113c8(void);
-int rt_hook_800112dc(void) { static int in; if (in || gte_dcls != DCLS_ROOM) return 0; near_room(f_800112dc, &in, 3); return 1; }
-int rt_hook_800113c8(void) { static int in; if (in || gte_dcls != DCLS_ROOM) return 0; near_room(f_800113c8, &in, 4); return 1; }
-int rt_hook_800102dc(void) { static int in; if (in || !(near_pass || pair_model)) return 0; near_face(f_800102dc, &in, 4); return 1; }
-int rt_hook_80010174(void) { static int in; if (in || !(near_pass || pair_model)) return 0; near_face(f_80010174, &in, 3); return 1; }
+int rt_hook_800112dc(void) { static int in; if (in || (gte_dcls != DCLS_ROOM && !obj_trace)) return 0; near_room(f_800112dc, &in, 3); return 1; }
+int rt_hook_800113c8(void) { static int in; if (in || (gte_dcls != DCLS_ROOM && !obj_trace)) return 0; near_room(f_800113c8, &in, 4); return 1; }
+/* Object faces reaching behind the camera (2026-11-26, user: hub living room, the stick camera right beside the blue
+   end table; most of its top and side were missing and the wall showed through). The object face setups 800102dc
+   (quad) / 80010174 (tri) drop a face when all corners share an outcode, and otherwise test its 2D winding (NCLIP,
+   unless face flag bit 0 = two-sided). A corner behind the camera projects mirrored (or pins at the screen limit), so
+   a face that really faces the camera fails NCLIP and never reaches the GPU. Like near_room for room faces: a dropped
+   object face with a corner near / behind the camera (SZ < H, 0 behind it, or pinned at the +-1024 screen limit;
+   object vertices get no outcode bits, unlike room vertices) is tested with its corners' true
+   camera-space points (GTE tags): it must face the camera (or be two-sided) and keep some area after clipping to
+   z >= 16 and a band around the screen; then it passes with the game's own OTZ (AVSZ, < 16000). gpu.c draws it from
+   its true points (clamp_draw). Not for objects the near-side rule let through (near_pass: their lens faces are
+   dropped on purpose). RUGRATS_OBJLENS=0 = off (old), RUGRATS_OBJLENSLOG=1 logs each rescue. */
+static int obj_lens_on(void) {
+    static int on = -1;
+    if (on < 0) { const char *e = getenv("RUGRATS_OBJLENS"); on = e ? atoi(e) != 0 : 1; }
+    return on && opt.subpixel && opt.objsort && opt.depthfix && (gte_dcls == DCLS_OBJ || on == 2);   /* part of "Fix model sort glitches" */
+}
+static void obj_lens_rescue(int nv) {
+    static int lg = -1;
+    if (lg < 0) { const char *e = getenv("RUGRATS_OBJLENSLOG"); lg = e ? atoi(e) : 0; }
+    const uint32_t w = mem_r32(cpu.r[16] + 4), flags = mem_r32(cpu.r[16]), tab = cpu.r[14];
+    const uint32_t off[4] = { (w & 0xffu) << 3, (w >> 5) & 0x7f8u, (w >> 13) & 0x7f8u, (w >> 21) & 0x7f8u };
+    /* a corner at / behind the lens: object vertices get no "near" outcode bit; SZ below the projection distance H
+       (0 when behind the camera) or a position pinned at the GTE's +-1024 screen limit */
+    uint32_t anynear = 0;
+    const uint32_t hproj = gte_read(58) & 0xffffu;
+    for (int k = 0; k < nv; k++) {
+        const uint32_t sxy = mem_r32(tab + off[k]), sz = mem_r32(tab + off[k] + 4) & 0xffffu;
+        const int sx = (int16_t)sxy, sy = (int16_t)(sxy >> 16);
+        anynear |= sz < hproj || sx <= -1024 || sx >= 1023 || sy <= -1024 || sy >= 1023;
+    }
+    if (lg > 1) {
+        rt_logf("f%u objlens? %s dcls %d flags %08x", present_count, nv == 4 ? "quad" : "tri", gte_dcls, flags);
+        for (int k = 0; k < nv; k++) { const uint32_t sxy = mem_r32(tab + off[k]), fl = mem_r32(tab + off[k] + 4);
+            rt_logf(" (%d,%d sz%u fl%02x)", (int16_t)sxy, (int16_t)(sxy >> 16), fl & 0xffffu, (fl >> 16) & 0x7f); }
+        rt_logf("\n");
+    }
+    if (!anynear) return;
+    double P[4][3];
+    static const int reg[4] = { 17, 18, 19, 20 };
+    for (int k = 0; k < nv; k++) {
+        gte_mtc2_sxy(12, cpu.r[reg[k]], tag_ld[reg[k]]);
+        if (!gte_sxp(0, P[k])) return;
+    }
+    if (!(flags & 1)) {
+        #define DET3(a, b, c) ((a)[0] * ((b)[1] * (c)[2] - (b)[2] * (c)[1]) - (a)[1] * ((b)[0] * (c)[2] - (b)[2] * (c)[0]) + (a)[2] * ((b)[0] * (c)[1] - (b)[1] * (c)[0]))
+        const int front = DET3(P[0], P[1], P[2]) > 0 || (nv == 4 && -DET3(P[3], P[1], P[2]) > 0);
+        #undef DET3
+        if (!front) return;
+    }
+    double ox, oy, hh, ww;
+    gte_proj_params(&ox, &oy, &hh, &ww);
+    const double x0 = -400, x1 = 400, y0 = -200, y1 = 200;   /* the drawing area (16:9 too) plus a band */
+    double a[12][3], b[12][3];
+    static const int ring4[4] = { 0, 1, 3, 2 };
+    int n = nv;
+    for (int k = 0; k < nv; k++) memcpy(a[k], P[nv == 4 ? ring4[k] : k], sizeof a[k]);
+    n = nr_clip(a, n, b, 0, 0, 1);  for (int k = 0; k < n; k++) b[k][2] -= 16;   /* z >= 16 */
+    n = nr_clip(b, n, a, 0, 0, 1);  for (int k = 0; k < n; k++) a[k][2] += 16;
+    n = nr_clip(a, n, b, hh * ww, 0, ox - x0);
+    n = nr_clip(b, n, a, -hh * ww, 0, x1 - ox);
+    n = nr_clip(a, n, b, 0, hh, oy - y0);
+    n = nr_clip(b, n, a, 0, -hh, y1 - oy);
+    if (lg) rt_logf("f%u objlens %s z %.0f %.0f %.0f%s%.0f -> %d left\n", present_count, nv == 4 ? "quad" : "tri",
+                    P[0][2], P[1][2], P[2][2], nv == 4 ? " " : "", nv == 4 ? P[3][2] : 0.0, n);
+    if (n < 3) return;
+    gte_mtc2_sxy(12, cpu.r[17], tag_ld[17]);
+    gte_mtc2_sxy(13, cpu.r[18], tag_ld[18]);
+    gte_mtc2_sxy(14, cpu.r[19], tag_ld[19]);
+    gte_op(0x158002du);   /* AVSZ3 over SZ1-3 (written by the setup), as the game does for both */
+    const int32_t otz = (int32_t)gte_read(7);
+    if (otz >= 16000) return;
+    cpu.r[21] = (uint32_t)otz;
+    cpu.r[25] = 1;
+}
+int rt_hook_800102dc(void) { static int in; if (in || !(near_pass || pair_model || obj_lens_on() || obj_trace)) return 0; near_face(f_800102dc, &in, 4); return 1; }
+int rt_hook_80010174(void) { static int in; if (in || !(near_pass || pair_model || obj_lens_on() || obj_trace)) return 0; near_face(f_80010174, &in, 3); return 1; }
 int rt_hook_8003205c(void) {
     static int in;
     if (!in) { void hooks_night_obj(uint32_t obj); hooks_night_obj(cpu.r[4]); }   /* "Let There Be Light" Fixes */

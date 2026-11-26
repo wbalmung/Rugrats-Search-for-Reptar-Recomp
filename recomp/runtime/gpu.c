@@ -2424,8 +2424,9 @@ static int cp_clip(CPt *in, int n, CPt *out, double a0, double a1, double a2, do
 static int bigtri(void) { static int z = -1; if (z < 0) { const char *e = getenv("RUGRATS_BIGTRI"); z = e ? atoi(e) : 1; } return z; }
 static int clamppos(void) { static int z = -1; if (z < 0) { const char *e = getenv("RUGRATS_CLAMPPOS"); z = e ? atoi(e) : 1; } return z; }
 /* one triangle: src = the game's corners (attributes, depth class), P / U / V = their true points and texture coords */
+/* centre_guard: not drawn when its true shape covers the view centre (where the player stands), like the PS1's drop */
 static void clamp_draw(const Vtx *const src[3], const double P[3][3], const double U[3], const double V[3], int textured,
-                       int gouraud, int semi_on, int raw, int clutx, int cluty, int tpx, int tpy, int depth) {
+                       int gouraud, int semi_on, int raw, int clutx, int cluty, int tpx, int tpy, int depth, int centre_guard) {
     CPt a[CP_MAX], b[CP_MAX];
     int n = 3;
     for (int k = 0; k < 3; k++) {
@@ -2470,6 +2471,22 @@ static void clamp_draw(const Vtx *const src[3], const double P[3][3], const doub
         w->pw = textured && opt.perspective ? w->iz : 0;
         if (w->iz > zmax) zmax = w->iz;
     }
+    if (centre_guard)   /* the view centre and 60 lines below it (the player), as bigtri's rule */
+        for (int c = 0; c < 2; c++) {
+            const double px = g.offx, py = g.offy + 60 * c;
+            int pos = 0, neg = 0;
+            for (int i = 0; i < n; i++) {
+                const Vtx *A = &o[i], *B = &o[(i + 1) % n];
+                const double ax = A->x + A->fx / 256.0, ay = A->y + A->fy / 256.0;
+                const double ex = B->x + B->fx / 256.0 - ax, ey = B->y + B->fy / 256.0 - ay;
+                const double e = ex * (py - ay) - ey * (px - ax);
+                pos |= e > 0; neg |= e < 0;
+            }
+            if (!(pos && neg)) {
+                if (gpu_cmdlog) rt_logf("   clamp_draw: true shape covers the view centre, dropped like the PS1\n");
+                return;
+            }
+        }
     const float zl = (src[0]->dm == DM_WRITE || src[0]->dm == DM_WNT) ? depth_reach(zmax) : 0;
     for (int i = 0; i < n; i++) o[i].zl = zl;
     {   /* CPU renderer's slope bias from the biggest piece (see tri_t) */
@@ -3449,6 +3466,7 @@ static void exec_poly(uint32_t *f) {
         tri_hr_skip = 0;
         for (int t = 0; t < (quad ? 2 : 1); t++) {
             if (t ? skip1 : skip0) continue;
+            int centre = 0;
             /* the PS1 GPU drops a triangle wider than 1023 / taller than 511 (pinned corners make many of them, e.g. a
                tree trunk right at the lens): the true triangle is drawn only where the game's one is */
             {
@@ -3463,12 +3481,26 @@ static void exec_poly(uint32_t *f) {
                    positions, so pieces whose true area is on screen can be missing; the whole wall's true shape covers
                    exactly what its pieces would (same plane and texture) */
                 const int room = v[t].dm == DM_WRITE || v[t].dm == DM_WNT;
-                int pinned = 0;   /* positions from pinned corners: the PS1's drop stands (tree trunk at the lens) */
+                int pinned = 0;   /* positions from pinned corners (tree trunk at the lens) */
                 for (int k = 0; k < 3 && !pinned; k++) pinned = np_fromclamp(f[vi[t + k]], 0);
-                if ((x1 - x0 > 1023 || y1 - y0 > 511) &&
-                    ((pinned && !(room && x1 > x0 && y1 > y0)) || (behind_un && !behind_obj))) {
+                const int big = x1 - x0 > 1023 || y1 - y0 > 511;
+                if (big && behind_un && !behind_obj) {
                     if (gpu_cmdlog) rt_logf("   clamp_draw: tri %d too big for the PS1 (%dx%d), skipped\n", t, x1 - x0, y1 - y0);
                     continue;
+                }
+                /* Pinned and too big, not a room wall: drawn from its true points unless that shape covers the view
+                   centre (2026-11-26, user: a hub end table right beside the stick camera lost its top and side and
+                   the wall showed through; the PS1 drops those triangles too). The tree trunk at the lens over Angelica
+                   (mini golf, the reason for the old drop) covers the centre and stays dropped. RUGRATS_PINNEDBIG=0 =
+                   old: always dropped. */
+                static int pinbig = -1;
+                if (pinbig < 0) { const char *e = getenv("RUGRATS_PINNEDBIG"); pinbig = e ? atoi(e) != 0 : 1; }
+                if (big && pinned && !(room && x1 > x0 && y1 > y0)) {
+                    if (!pinbig || !opt.objsort) {   /* part of "Fix model sort glitches" */
+                        if (gpu_cmdlog) rt_logf("   clamp_draw: tri %d too big for the PS1 (%dx%d), skipped\n", t, x1 - x0, y1 - y0);
+                        continue;
+                    }
+                    centre = 1;
                 }
             }
             const Vtx *s3[3]; double P[3][3], U[3], V[3];
@@ -3478,7 +3510,7 @@ static void exec_poly(uint32_t *f) {
                 for (int c = 0; c < 3; c++) P[k][c] = cp3[j].p[c];
                 U[k] = cu[j]; V[k] = cv[j];
             }
-            clamp_draw(s3, P, U, V, tex, gour, semi_on, raw, clutx, cluty, tpx, tpy, depth);
+            clamp_draw(s3, P, U, V, tex, gour, semi_on, raw, clutx, cluty, tpx, tpy, depth, centre);
         }
         return;
     }

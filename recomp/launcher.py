@@ -172,7 +172,8 @@ SETTINGS = [
     ("Video", "Fix doubled-face flicker", "video", "dupfix", 1, BOOL, OFF_ON,
      "Some models draw a face twice; the second copy no longer flickers. Off: original."),
     ("Video", "Fix model sort glitches", "video", "objsort", 1, BOOL, OFF_ON,
-     "Solid parts of a model hide its parts behind them. Needs Hide objects behind walls. Off: original."),
+     "Solid parts of a model hide its parts behind them; props right at the camera keep their faces up to the screen "
+     "edge. Needs Hide objects behind walls. Off: original."),
     ("Audio/Input", "Volume", "audio", "volume", 100, VOL, _pct, "Master volume."),
     ("Audio/Input", "Music", "audio", "music", 100, VOL, _pct, "Background music."),
     ("Audio/Input", "Sound effects", "audio", "sfx", 100, VOL, _pct, "Effects and ambient sounds."),

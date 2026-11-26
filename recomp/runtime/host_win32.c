@@ -1390,7 +1390,7 @@ static MenuItem menu_items[] = {
     { "Fix doubled-face flicker", MI_CHOICE, &opt.dupfix, v_bool, 2, off_on, NULL, NULL, "video", "dupfix", NULL,
       "Some models draw a face twice; the second copy no longer flickers over parts drawn in between (toy store stands). Off: original.", T_VIDEO },
     { "Fix model sort glitches", MI_CHOICE, &opt.objsort, v_bool, 2, off_on, NULL, NULL, "video", "objsort", NULL,
-      "Solid parts of a model hide its parts behind them (toy store box tops no longer get purple wedges). Needs Hide objects behind walls. Off: original.", T_VIDEO },
+      "Solid parts of a model hide its parts behind them (toy store box tops no longer get purple wedges); props right at the camera keep their faces up to the screen edge. Needs Hide objects behind walls. Off: original.", T_VIDEO },
     { "Volume", MI_CHOICE, &opt.volume, v_vol, 11, NULL, "%d%%", NULL, "audio", "volume", NULL,
       "Master volume.", T_AUDIO, "Audio" },
     { "Music", MI_CHOICE, &opt.vol_music, v_vol, 11, NULL, "%d%%", NULL, "audio", "music", NULL,

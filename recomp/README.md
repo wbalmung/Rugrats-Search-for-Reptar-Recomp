@@ -526,6 +526,16 @@ logs every list packet with its layer and each frame's room point count.
   screen edge, so objects whose centre is outside the 4:3 view go to the normal sphere test instead. Their faces with
   a corner at the lens are skipped (`RUGRATS_NEARFACE=<SZ>`, default 48, 0 = keep), and the whole object is hidden
   while most of its faces are at the lens (camera inside it). `RUGRATS_NEARLOG=1` logs it all (debug);
+- `RUGRATS_OBJLENS=0` turns off the object lens rescue (part of "Fix model sort glitches", so it also needs Sub-pixel 3D
+  and Hide objects behind walls; default on, 2026-11-26): a prop right beside the camera (the
+  hub's navy sideboard with the stick camera next to it) has corners behind the lens; they project mirrored or pin at
+  the GTE's screen limit, so the game's 2D winding test dropped faces that really face the camera (its top and side
+  vanished, the wall showed through). Such a dropped face is now tested with its corners' true 3D points (faces the
+  camera, something left after clipping at the lens) and passed on; the renderer draws it from those points, clipped
+  at the lens, so the model fills to the screen edge. `RUGRATS_PINNEDBIG=0` (or the row Off) = old rule for the drawing side: a
+  triangle with pinned corners too big for the PS1 GPU was always dropped; now only when its true shape covers the
+  view centre (the tree trunk at the lens over Angelica in mini golf stays as before). Debug: `RUGRATS_OBJLENSLOG=1`
+  (2 = every dropped object face), `RUGRATS_OBJTRACE=<hex obj>` (every face setup of one object);
 - `RUGRATS_PAIRCULL=0` turns off the back-to-back panel fix (default on): signs built as two flat double-sided panels
   facing opposite ways (Reptar 2010 "L&K") are drawn one-sided, so each side shows only its own panel instead of a
   mix of both (half mirrored). `RUGRATS_PAIRLOG=1` logs the panels found (debug);
