@@ -166,14 +166,10 @@ SETTINGS = [
     ("Video", "Frame overlap", "video", "overlap", 0, BOOL, OFF_ON,
      "On: at 2x-4x each frame is shown one frame later so the render threads keep working. More fps, +1 frame lag."),
     ("Video", "Perspective textures", "video", "perspective", 1, BOOL, OFF_ON,
-     "On: textures on walls and floors stay straight. Needs Hide objects behind walls. Off: original."),
-    ("Video", "Hide objects behind walls", "video", "depthfix", 1, BOOL, OFF_ON,
-     "Objects behind nearer walls or shelves stay hidden (the PS1's draw order can show them through). Off: original."),
-    ("Video", "Fix doubled-face flicker", "video", "dupfix", 1, BOOL, OFF_ON,
-     "Some models draw a face twice; the second copy no longer flickers. Off: original."),
-    ("Video", "Fix model sort glitches", "video", "objsort", 1, BOOL, OFF_ON,
-     "Solid parts of a model hide its parts behind them; props right at the camera keep their faces up to the screen "
-     "edge. Needs Hide objects behind walls. Off: original."),
+     "On: textures on walls and floors stay straight. Needs Renderer Fixes. Off: original."),
+    ("Video", "Renderer Fixes", "video", "render_fixes", 1, BOOL, OFF_ON,
+     "Objects stay hidden behind nearer walls; doubled faces no longer flicker; a model's solid parts hide its parts "
+     "behind them; props right at the camera keep their faces up to the screen edge. Off: original."),
     ("Audio/Input", "Volume", "audio", "volume", 100, VOL, _pct, "Master volume."),
     ("Audio/Input", "Music", "audio", "music", 100, VOL, _pct, "Background music."),
     ("Audio/Input", "Sound effects", "audio", "sfx", 100, VOL, _pct, "Effects and ambient sounds."),

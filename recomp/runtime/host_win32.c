@@ -1302,6 +1302,7 @@ static void show_scale(int v, char *out, int n) {
 static void ap_window(void) { resize_window(); }
 static void ap_fs(void) { if (want_fs != fullscreen) toggle_fullscreen(); opt.fullscreen = want_fs; }
 static void ap_title(void) { update_title(); }
+static void ap_renderfix(void) { opt.depthfix = opt.dupfix = opt.objsort = opt.render_fixes; }   /* Renderer Fixes */
 static void ap_res(void) { gpu_set_scale(opt.internal); opt.internal = gpu_scale(); }
 static void show_res(int v, char *out, int n) {
     const char *tag = v == 9 ? "4K" : v == 6 ? "1440p" : v == 4 ? "~1080p" : NULL;   /* short: must fit the value box */
@@ -1384,13 +1385,9 @@ static MenuItem menu_items[] = {
       "On: at 2x-4x each frame is shown one frame later so the render threads keep working. More fps, +1 frame lag.", T_VIDEO,
       "Fixes" },
     { "Perspective textures", MI_CHOICE, &opt.perspective, v_bool, 2, off_on, NULL, NULL, "video", "perspective", NULL,
-      "On: textures on walls and floors stay straight (no PS1 warping on big near walls). Needs Hide objects behind walls. Off: original.", T_VIDEO },
-    { "Hide objects behind walls", MI_CHOICE, &opt.depthfix, v_bool, 2, off_on, NULL, NULL, "video", "depthfix", NULL,
-      "Objects behind nearer walls or shelves stay hidden (the PS1's draw order can show them through). Off: original.", T_VIDEO },
-    { "Fix doubled-face flicker", MI_CHOICE, &opt.dupfix, v_bool, 2, off_on, NULL, NULL, "video", "dupfix", NULL,
-      "Some models draw a face twice; the second copy no longer flickers over parts drawn in between (toy store stands). Off: original.", T_VIDEO },
-    { "Fix model sort glitches", MI_CHOICE, &opt.objsort, v_bool, 2, off_on, NULL, NULL, "video", "objsort", NULL,
-      "Solid parts of a model hide its parts behind them (toy store box tops no longer get purple wedges); props right at the camera keep their faces up to the screen edge. Needs Hide objects behind walls. Off: original.", T_VIDEO },
+      "On: textures on walls and floors stay straight (no PS1 warping on big near walls). Needs Renderer Fixes. Off: original.", T_VIDEO },
+    { "Renderer Fixes", MI_CHOICE, &opt.render_fixes, v_bool, 2, off_on, NULL, NULL, "video", "render_fixes", ap_renderfix,
+      "Objects stay hidden behind nearer walls; doubled faces no longer flicker (toy store stands); a model's solid parts hide its parts behind them (toy store box tops); props right at the camera keep their faces up to the screen edge. Off: original.", T_VIDEO },
     { "Volume", MI_CHOICE, &opt.volume, v_vol, 11, NULL, "%d%%", NULL, "audio", "volume", NULL,
       "Master volume.", T_AUDIO, "Audio" },
     { "Music", MI_CHOICE, &opt.vol_music, v_vol, 11, NULL, "%d%%", NULL, "audio", "music", NULL,
@@ -2863,9 +2860,12 @@ static void load_config(void) {
     opt.widescreen = GetPrivateProfileIntA("video", "widescreen", 1, ini);
     opt.stretch2d = GetPrivateProfileIntA("video", "stretch2d", 1, ini) != 0;
     opt.widecull = GetPrivateProfileIntA("video", "widecull", 1, ini) != 0;
-    opt.depthfix = GetPrivateProfileIntA("video", "depthfix", 1, ini) != 0;
-    opt.dupfix = GetPrivateProfileIntA("video", "dupfix", 1, ini) != 0;
-    opt.objsort = GetPrivateProfileIntA("video", "objsort", 1, ini) != 0;
+    {   /* Renderer Fixes (one row since 2026-11-26): an ini from before has the three parts as separate keys; off if any was off */
+        const int old3 = GetPrivateProfileIntA("video", "depthfix", 1, ini) && GetPrivateProfileIntA("video", "dupfix", 1, ini) &&
+                         GetPrivateProfileIntA("video", "objsort", 1, ini);
+        opt.render_fixes = GetPrivateProfileIntA("video", "render_fixes", old3, ini) != 0;
+        opt.depthfix = opt.dupfix = opt.objsort = opt.render_fixes;
+    }
     opt.perspective = GetPrivateProfileIntA("video", "perspective", 1, ini) != 0;
     opt.dither = GetPrivateProfileIntA("video", "dither", 1, ini);
     if (opt.dither < 0 || opt.dither > 2) opt.dither = 1;
@@ -2935,6 +2935,7 @@ int main(int argc, char **argv) {
         if ((e = getenv("RUGRATS_RENDERER"))) opt.renderer = atoi(e) != 0;
         if ((e = getenv("RUGRATS_WIDECULL"))) opt.widecull = atoi(e) != 0;
         if ((e = getenv("RUGRATS_STRETCH2D"))) opt.stretch2d = atoi(e) != 0;
+        if ((e = getenv("RUGRATS_RENDERFIXES"))) opt.render_fixes = opt.depthfix = opt.dupfix = opt.objsort = atoi(e) != 0;
         if ((e = getenv("RUGRATS_DEPTHFIX"))) opt.depthfix = atoi(e) != 0;
         if ((e = getenv("RUGRATS_DUPFIX"))) opt.dupfix = atoi(e) != 0;
         if ((e = getenv("RUGRATS_OBJSORT"))) opt.objsort = atoi(e) != 0;

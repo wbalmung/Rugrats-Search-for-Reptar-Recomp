@@ -134,6 +134,8 @@ typedef struct {
     int widescreen;      /* 1 = 16:9 GTE projection */
     int stretch2d;       /* 1 = 2D (menus, HUD, text) stretched to 16:9 with the picture; 0 = kept at 4:3 (gpu.c sq_*) */
     int widecull;        /* 1 = widen the game's portal culling to the 16:9 view (needs widescreen) */
+    int render_fixes;    /* Renderer Fixes (F1 Video, ini [video] render_fixes, default 1): sets depthfix, dupfix and
+                            objsort together (host_win32.c ap_renderfix); they stay separate flags for the code */
     int depthfix;        /* 1 = hi-res depth check: world objects stay hidden behind nearer room geometry */
     int dupfix;          /* 1 = hi-res picture leaves out exact repeats of a triangle drawn earlier in the frame */
     int objsort;         /* 1 = front-facing opaque object triangles also store depth (needs depthfix), see gpu.c DM_TW */

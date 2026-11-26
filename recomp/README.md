@@ -254,7 +254,10 @@ tries fewer, then Off (logged). Alpha-tested cut-outs (texel 0) keep hard inner 
   lit colours are kept at full precision in the hi-res target, no dither and no banding; CPU renderer = same as Off).
   Textures with dithering painted into them are not changed. Test shots read back at 15-bit, so they don't show the
   full-colour part; capture the real window to check it.
-- **Hide objects behind walls** (`depthfix` in `[video]`, default 1; F1 row). The game sorts room polygons by their
+- **Renderer Fixes** (F1 Video row, `render_fixes` in `[video]`, default 1, `RUGRATS_RENDERFIXES=0/1`; since 2026-11-26 one
+  row for the three parts below, which were separate rows; an older ini with any of `depthfix` / `dupfix` / `objsort` = 0
+  starts with it off). The parts keep their own debug switches (`RUGRATS_DEPTHFIX`, `RUGRATS_DUPFIX`, `RUGRATS_OBJSORT`).
+- **Hide objects behind walls** (part of Renderer Fixes; `opt.depthfix`). The game sorts room polygons by their
   farthest corner, so a world object behind a big near room face (a shelf top seen from above) can paint over it.
   Hi-res renderers keep a depth buffer: room geometry writes it, world objects are hidden where they are more than
   96 camera units (SZ scale, a room block is 1024) plus a slope bias behind it (`RUGRATS_DEPTHGAP=96`; room writes
@@ -328,7 +331,7 @@ tries fewer, then Off (logged). Alpha-tested cut-outs (texel 0) keep hard inner 
   unsure room pieces (WNT) skip overlay pixels; room and object tests already do. Backdrops drawn before the 3D
   scene are not overlays. GP0 log: `depth hud` / `depth hud-test`, and `hud? no: ...` says why a 2D polygon was
   not taken.
-- **Fix doubled-face flicker** (`dupfix` in `[video]`, default 1; F1 Video row; `RUGRATS_DUPFIX=0/1`). Some models draw a
+- **Fix doubled-face flicker** (part of Renderer Fixes; `opt.dupfix`; `RUGRATS_DUPFIX=0/1`). Some models draw a
   face twice in one frame (a toy store stand's side face: once as a triangle, again as half of a quad), and the
   game's sort can put other polygons between the two copies (the stand's books). When the camera angle tips the sort,
   the second copy painted over the books for single frames. The hi-res picture now leaves out an exact repeat
@@ -336,7 +339,7 @@ tries fewer, then Off (logged). Alpha-tested cut-outs (texel 0) keep hard inner 
   quad) of an opaque triangle already drawn since the game last set the drawing area (GP0 E3 = a new frame).
   Native VRAM stays exact. GP0 log: `repeat: hi-res skips ...` lines. (Tried first and dropped: depth-sorting
   objects against each other; the stand has a light-blue lid the game always paints over, which true depth showed.)
-- **Fix model sort glitches** (`objsort` in `[video]`, default 1; F1 Video row; `RUGRATS_OBJSORT=0/1`; needs
+- **Fix model sort glitches** (part of Renderer Fixes; `opt.objsort`; `RUGRATS_OBJSORT=0/1`; needs
   "Hide objects behind walls"). The game sorts each face of a model on its own, and faces use different rules
   (average, nearest or farthest corner), so a far face can land after a nearer one: in the toy store a shelf's purple
   back panel (average) cut a wedge into the slanted wood top of the box in front of it (farthest corner) while the
